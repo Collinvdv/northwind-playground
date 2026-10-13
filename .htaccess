@@ -1,0 +1,4 @@
+# Never serve secrets or the SQL dump over HTTP.
+<FilesMatch "^(\.env.*|.*\.sql|README\.md)$">
+    Require all denied
+</FilesMatch>

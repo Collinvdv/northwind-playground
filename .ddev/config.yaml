@@ -1,0 +1,18 @@
+name: northwind
+type: php
+docroot: ""
+php_version: "8.3"
+webserver_type: nginx-fpm
+database:
+  type: mysql
+  version: "8.0"
+web_environment:
+  - DB_HOST=db
+  - DB_PORT=3306
+  - DB_NAME=northwind
+  - DB_USER=northwind_ro
+  - DB_PASS=northwind
+hooks:
+  post-start:
+    # First start only: import the Northwind dump and create the read-only user.
+    - exec: 'mysql -uroot -proot -hdb -e "USE northwind" 2>/dev/null || (mysql -uroot -proot -hdb < /var/www/html/Northwind.sql && mysql -uroot -proot -hdb < /var/www/html/setup.sql && echo "Northwind imported")'
