@@ -4,9 +4,10 @@
  * - CodeMirror editor (when the CDN loaded) with table/column autocomplete.
  * - Ctrl/Cmd+Enter triggers the page's primary action (Run or Check).
  * - The form is sent with fetch(); only the results block comes back.
- * - Shared hosts answer 429/503 when a whole classroom (one public IP) runs
- *   queries at once: wait for Retry-After and retry instead of showing the
- *   host's error page. The buttons stay disabled while a request runs.
+ * - Shared hosts answer 429 when a whole classroom (one public IP) runs
+ *   queries at once, and lib.php answers 503 when every database slot is
+ *   taken: wait for Retry-After and retry (up to 4 times) instead of showing
+ *   an error page. The buttons stay disabled while a request runs.
  */
 (function () {
   var form = document.getElementById('sqlform');
@@ -56,6 +57,68 @@
 
   function wait(seconds) { return new Promise(function (r) { setTimeout(r, seconds * 1000); }); }
 
+  // Full-page canvas overlay for the short verdict effects below. Returns null
+  // when the user asked the OS for reduced motion, so callers just bail out.
+  function overlayCanvas() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+    var canvas = document.createElement('canvas');
+    canvas.className = 'fx';
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    document.body.appendChild(canvas);
+    return canvas;
+  }
+
+  function removeCanvas(canvas) {
+    if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+  }
+
+  // A short burst of confetti over the page when an exercise is correct.
+  // Plain canvas, about 1.5 seconds, nothing to click through.
+  function confetti() {
+    var canvas = overlayCanvas();
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var colors = ['#1d4ed8', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+    var pieces = [];
+    for (var i = 0; i < 140; i++) {
+      pieces.push({
+        x: canvas.width / 2 + (Math.random() - 0.5) * canvas.width * 0.4,
+        y: canvas.height * 0.3,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -Math.random() * 14 - 4,
+        w: 6 + Math.random() * 6,
+        h: 4 + Math.random() * 4,
+        rot: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.3,
+        color: colors[i % colors.length]
+      });
+    }
+    var start = null;
+    function frame(ts) {
+      if (start === null) start = ts;
+      var t = (ts - start) / 1000;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.globalAlpha = Math.max(0, 1 - Math.max(0, t - 1) / 0.6);
+      pieces.forEach(function (p) {
+        p.vy += 0.35;
+        p.vx *= 0.99;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.vr;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      });
+      if (t < 1.6) requestAnimationFrame(frame);
+      else removeCanvas(canvas);
+    }
+    requestAnimationFrame(frame);
+  }
+
   function submitViaFetch(attempt) {
     var body = new FormData(form);
     body.set('action', action);
@@ -69,7 +132,7 @@
         var retry = parseInt(res.headers.get('Retry-After'), 10);
         if (!(retry > 0)) retry = 3;
         retry = Math.min(retry, 30);
-        if (attempt < 2) {
+        if (attempt < 4) {
           notice('Server busy (HTTP ' + res.status + '), retrying in ' + retry + ' s…');
           return wait(retry).then(function () { return submitViaFetch(attempt + 1); });
         }
@@ -81,6 +144,7 @@
         resultsBox.innerHTML = html;
         var verdict = resultsBox.querySelector('.verdict');
         if (verdict && verdict.scrollIntoView) verdict.scrollIntoView({ block: 'nearest' });
+        if (verdict && verdict.classList.contains('correct')) confetti();
       });
     });
   }
@@ -99,7 +163,11 @@
     notice('Running…');
     submitViaFetch(0)
       .catch(function (err) { notice('Request failed: ' + err.message + '. Try again.', true); })
-      .then(function () { setBusy(false); });
+      .then(function () {
+        setBusy(false);
+        // Page extras (assets/exam.js) react to the new results, or to a failed request.
+        document.dispatchEvent(new CustomEvent('nw:result', { detail: { action: action } }));
+      });
   });
 
   // Several statements: their results are tabs (markup from renderResults()).
@@ -135,17 +203,57 @@
       .replace(/–/g, '-');
   }
 
-  var editorButtons = Array.prototype.slice.call(form.querySelectorAll('button[data-cmd]'));
+  // Save: download the editor's text as a .sql file (works without CodeMirror too).
+  function currentSql() { return editor ? editor.getValue() : textarea.value; }
+  Array.prototype.forEach.call(form.querySelectorAll('button[data-cmd=save]'), function (b) {
+    b.addEventListener('click', function () {
+      var name = b.dataset.filename || 'query.sql';
+      var text = currentSql().replace(/\n?$/, '\n');
+      var blob = new Blob([text], { type: 'application/sql;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      if (editor) editor.focus();
+    });
+  });
 
+  var editorButtons = Array.prototype.slice.call(form.querySelectorAll('button[data-cmd]:not([data-cmd=save])'));
+
+  // No CodeMirror (CDN slow or blocked, e.g. on a school network): the buttons
+  // still work on the plain textarea. execCommand keeps the browser's own
+  // undo history, so Undo also takes back a Format.
   if (!window.CodeMirror) {
-    editorButtons.forEach(function (b) { b.hidden = true; });
+    editorButtons.forEach(function (b) {
+      b.addEventListener('click', function () {
+        textarea.focus();
+        if (b.dataset.cmd !== 'format') {
+          document.execCommand(b.dataset.cmd);
+          return;
+        }
+        if (!window.formatSql) return;
+        var formatted = window.formatSql(textarea.value).replace(/\n$/, '');
+        if (formatted === textarea.value) return;
+        textarea.select();
+        if (!document.execCommand('insertText', false, formatted)) textarea.value = formatted;
+      });
+    });
     return;
   }
 
   // Autocomplete: CodeMirror's sql-hint (tables, Table.columns, keywords) plus
-  // bare column names of every table, minus the word already typed in full,
-  // so Enter after "FROM" inserts a newline instead of "accepting" FROM again.
+  // bare column names of every table and the function names from sqlformat.js
+  // (ROUND, CONCAT, YEAR, ... which sql-hint does not know), minus the word
+  // already typed in full, so Enter after "FROM" inserts a newline instead of
+  // "accepting" FROM again. A function is inserted with its "(".
   var tables = config.tables || {};
+  var functions = window.sqlFunctions || [];
+  var functionSet = {};
+  functions.forEach(function (f) { functionSet[f] = 1; });
   var columnIndex = {};                       // lower-case column -> {text, tables: []}
   Object.keys(tables).forEach(function (t) {
     (tables[t] || []).forEach(function (c) {
@@ -161,20 +269,27 @@
     if (!result || !result.list) return result;
     var word = cm.getRange(result.from, result.to).toLowerCase();
     var tableHits = [], rest = [];
+    var bare = word.length > 0 && word.indexOf('.') < 0 && word.charAt(0) !== '`';
     result.list.forEach(function (item) {
       var text = typeof item === 'string' ? item : item.text;
       if (text.toLowerCase() === word) return;
+      if (bare && functionSet[text.toUpperCase()]) return;   // shown as a function below
       if (tables.hasOwnProperty(text)) tableHits.push(item); else rest.push(item);
     });
-    var columnHits = [];
-    if (word.length > 0 && word.indexOf('.') < 0 && word.charAt(0) !== '`') {
+    var columnHits = [], functionHits = [];
+    if (bare) {
       columnKeys.forEach(function (key) {
         if (key.indexOf(word) !== 0 || key === word) return;
         var col = columnIndex[key];
         columnHits.push({ text: col.text, displayText: col.text + '  ·  ' + col.tables.join(', '), className: 'hint-column' });
       });
+      var upper = word.toUpperCase();
+      functions.forEach(function (f) {
+        if (f.indexOf(upper) !== 0) return;
+        functionHits.push({ text: f + '(', displayText: f + '()', className: 'hint-function' });
+      });
     }
-    result.list = tableHits.concat(columnHits, rest);
+    result.list = tableHits.concat(columnHits, functionHits, rest);
     return result.list.length ? result : null;
   }
 
@@ -240,6 +355,7 @@
     },
     hintOptions: hintOptions
   });
+  config.editor = editor;                     // for page extras (assets/exam.js)
 
   // Clean pasted text before it lands in the editor.
   editor.on('beforeChange', function (cm, change) {

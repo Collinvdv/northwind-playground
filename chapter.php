@@ -42,7 +42,8 @@ pageStart('Chapter ' . $c . ': ' . $chapter['title'], 'home');
   <h2>Exercises</h2>
   <ol class="exercise-list">
     <?php foreach ($chapter['exercises'] as $ex): ?>
-      <li><a href="exercise.php?c=<?= $c ?>&amp;e=<?= $ex['number'] ?>"><?= h($ex['title']) ?></a></li>
+      <li><a href="exercise.php?c=<?= $c ?>&amp;e=<?= $ex['number'] ?>"><?= h($ex['title']) ?></a>
+        <button type="button" class="fav-toggle" data-fav="<?= $c ?>.<?= $ex['number'] ?>" data-fav-title="<?= $c ?>.<?= $ex['number'] ?> <?= h($ex['title']) ?>" hidden>☆</button></li>
     <?php endforeach; ?>
   </ol>
   <?php if ($chapter['exercises']): ?>
@@ -54,4 +55,4 @@ pageStart('Chapter ' . $c . ': ' . $chapter['title'], 'home');
     <span><?php if ($next): ?><a href="chapter.php?c=<?= $next['number'] ?>"><?= h($next['title']) ?> →</a><?php endif; ?></span>
   </div>
 <?php
-pageEnd();
+pageEnd(null, 'run', false, ['favourites.js']);

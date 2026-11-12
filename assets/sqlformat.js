@@ -304,4 +304,5 @@
   }
 
   root.formatSql = formatSql;
+  root.sqlFunctions = Object.keys(FUNCTIONS).sort();   // for the editor's autocomplete
 })(typeof module !== 'undefined' && module.exports ? module.exports : window);

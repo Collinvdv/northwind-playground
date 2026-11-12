@@ -18,14 +18,20 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require dirname(__DIR__) . '/lib.php';
+require dirname(__DIR__) . '/examlib.php';
 
 $pdo = connect($config);
 rememberConnectionId($pdo);
 
 $failures = 0;
 $count = 0;
-foreach (loadChapters() as $chapter) {
-    echo "Chapter {$chapter['number']}: {$chapter['title']}\n";
+// The exams in exam-sets/ go through the same checks as the chapters.
+$sets = loadChapters();
+foreach (glob(dirname(__DIR__) . '/exam-sets/*.php') ?: [] as $file) {
+    $sets[] = loadExamSet(basename($file, '.php')) + ['number' => 'E', 'examples' => []];
+}
+foreach ($sets as $chapter) {
+    echo ($chapter['number'] === 'E' ? '' : "Chapter {$chapter['number']}: "), $chapter['title'], "\n";
     foreach ($chapter['examples'] as $i => $example) {
         try {
             $r = runStatement($pdo, rtrim(trim($example['sql']), ';'), CHECK_MAX_ROWS);
@@ -37,7 +43,7 @@ foreach (loadChapters() as $chapter) {
     }
     foreach ($chapter['exercises'] as $ex) {
         $count++;
-        $label = sprintf("  %d.%-2d %-45s", $chapter['number'], $ex['number'], mb_strimwidth($ex['title'], 0, 45, '…'));
+        $label = sprintf("  %s.%-2d %-45s", $chapter['number'], $ex['number'], mb_strimwidth($ex['title'], 0, 45, '…'));
         $problems = [];
         try {
             $r = runStatement($pdo, $ex['solution'], CHECK_MAX_ROWS);

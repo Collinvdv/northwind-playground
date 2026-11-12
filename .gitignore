@@ -1,1 +1,7 @@
 .env
+exam-data/*.json
+exam-data/deleted/
+exam-data/log/
+exam-data/broken/
+exam-data/*.lock
+exam-data/*.tmp-*

@@ -19,6 +19,11 @@ pageStart('Course', 'home');
     expected result. Each exercise has a hint and a solution. Use the playground to try anything.
   </p>
 
+  <section id="favourites" hidden>
+    <h2>Favourite exercises</h2>
+    <ol class="exercise-list"></ol>
+  </section>
+
   <div class="cards">
     <?php foreach ($chapters as $ch): ?>
       <a class="card" href="chapter.php?c=<?= $ch['number'] ?>">
@@ -33,6 +38,12 @@ pageStart('Course', 'home');
       <h2>Playground</h2>
       <p>Run any SELECT on the whole database. Several statements, autocomplete, table list.</p>
       <span class="meta">Open playground</span>
+    </a>
+    <a class="card playground" href="erd.php" data-erd-open>
+      <span class="num">Reference</span>
+      <h2>Database diagram</h2>
+      <p>All tables with their primary and foreign keys, and the lines between them: which columns to join on.</p>
+      <span class="meta">Open diagram</span>
     </a>
   </div>
 
@@ -50,4 +61,4 @@ pageStart('Course', 'home');
     </ul>
   </div>
 <?php
-pageEnd();
+pageEnd(null, 'run', false, ['favourites.js']);

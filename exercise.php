@@ -23,32 +23,45 @@ $action = ($_POST['action'] ?? 'check') === 'run' ? 'run' : 'check';
 $sqlInput = $isPost ? ($_POST['sql'] ?? '') : ($exercise['starter'] ?? '');
 $sqlInput = normalizeSql((string) $sqlInput);
 
+// A POST needs MySQL: take a slot first (503 + retry when all are busy).
+$slot = $isPost ? acquireDbSlot($config['DB_SLOTS']) : true;
+if ($slot === null) {
+    sendBusyIfFetch();
+}
+
 $pdo = null;
 $connectError = null;
-$schema = schemaOrConnect($config, $isPost, $pdo, $connectError);
+$schema = schemaOrConnect($config, $isPost && $slot !== null, $pdo, $connectError);
 
 $resultsHtml = '';
 if ($isPost) {
-    if ($pdo === null) {
+    if ($slot === null) {
+        $resultsHtml = busyNotice();
+    } elseif ($pdo === null) {
         $resultsHtml = renderResults([], $connectError);
     } elseif ($action === 'run') {
         $resultsHtml = renderResults(runScript($pdo, $sqlInput), null);
     } else {
         $resultsHtml = renderCheck(checkExercise($pdo, $exercise, $sqlInput));
     }
+    $pdo = null;              // close the connection before rendering the page
+    releaseDbSlot($slot);
 }
 
 if (isFetchRequest()) {
     sendFragment($resultsHtml);
 }
 
-// Sidebar: this chapter's exercises, then the table list.
-$sidebar = '<h2>Chapter ' . $c . ' · ' . h($chapter['title']) . '</h2><ol class="exercises">';
+// Sidebar: a compact numbered grid of this chapter's exercises, then the
+// table list, with the tables that the task mentions already opened.
+$sidebar = '<h2>Chapter ' . $c . ' · ' . h($chapter['title']) . '</h2><nav class="exnav" aria-label="Exercises">';
 foreach ($chapter['exercises'] as $ex) {
-    $sidebar .= '<li><a href="exercise.php?c=' . $c . '&amp;e=' . $ex['number'] . '"'
-        . ($ex['number'] === $e ? ' class="current"' : '') . '>' . h($ex['title']) . '</a></li>';
+    $sidebar .= '<a href="exercise.php?c=' . $c . '&amp;e=' . $ex['number'] . '" title="' . h($ex['title']) . '" data-fav="' . $c . '.' . $ex['number'] . '"'
+        . ($ex['number'] === $e ? ' class="current" aria-current="page"' : '') . '>' . $ex['number'] . '</a>';
 }
-$sidebar .= '</ol>' . renderSchemaSidebar($schema);
+$sidebar .= '</nav>';
+$mentioned = mentionedTables($schema, strip_tags($exercise['task']));
+$sidebar .= renderSchemaSidebar($schema, $mentioned);
 
 $prev = $chapter['exercises'][$e - 2] ?? null;
 $next = $chapter['exercises'][$e] ?? null;
@@ -59,7 +72,8 @@ pageStart('Exercise ' . $c . '.' . $e . ': ' . $exercise['title'], 'home', $side
   <div class="breadcrumb">
     <a href="index.php">Course</a> › <a href="chapter.php?c=<?= $c ?>">Chapter <?= $c ?>: <?= h($chapter['title']) ?></a> › Exercise <?= $e ?> of <?= count($chapter['exercises']) ?>
   </div>
-  <h1><?= $c ?>.<?= $e ?> <?= h($exercise['title']) ?></h1>
+  <h1><?= $c ?>.<?= $e ?> <?= h($exercise['title']) ?>
+    <button type="button" class="fav-toggle" data-fav="<?= $c ?>.<?= $e ?>" data-fav-title="<?= $c ?>.<?= $e ?> <?= h($exercise['title']) ?>" hidden>☆</button></h1>
 
   <div class="task">
     <?= $exercise['task'] ?>
@@ -73,6 +87,7 @@ pageStart('Exercise ' . $c . '.' . $e . ': ' . $exercise['title'], 'home', $side
       <button type="button" class="secondary editor-only" data-cmd="undo" title="Undo (Ctrl+Z / ⌘+Z)">Undo</button>
       <button type="button" class="secondary editor-only" data-cmd="redo" title="Redo (Ctrl+Y / ⇧⌘+Z)">Redo</button>
       <button type="button" class="secondary editor-only" data-cmd="format" title="Format the query (⇧Ctrl+F / ⇧⌘+F)">Format</button>
+      <button type="button" class="secondary" data-cmd="save" data-filename="exercise-<?= $c ?>-<?= $e ?>.sql" title="Download the editor's text as a .sql file">Save .sql</button>
       <span class="hint">Ctrl+Enter / ⌘+Enter checks · ⇧Ctrl+F / ⇧⌘+F formats · one statement per exercise</span>
     </div>
   </form>
@@ -106,4 +121,4 @@ pageStart('Exercise ' . $c . '.' . $e . ': ' . $exercise['title'], 'home', $side
     </span>
   </div>
 <?php
-pageEnd(hintTables($schema), 'check');
+pageEnd(hintTables($schema), 'check', false, ['favourites.js']);
