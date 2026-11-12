@@ -1,20 +1,26 @@
 # Northwind SQL course
 
 A small learning platform for MySQL on the Northwind database. Students open a
-URL and get seven chapters (SELECT, WHERE, ORDER BY, functions, GROUP BY, JOINs,
-subqueries), each with theory, runnable examples and 20 exercises (easy to hard)
-that are checked automatically, plus a free playground. No accounts, nothing is stored.
+URL and get three chapters, each a series of lessons: **SELECT** (SELECT, WHERE,
+ORDER BY, functions, GROUP BY, JOINs, subqueries; 20 exercises per lesson),
+**ERD** (one lesson with theory, a dozen worked example diagrams and 12 drawing
+exercises, then six projects: hotel, hospital, food delivery, music festival,
+car rental, sports club, each a case designed in four steps) and **CRUD** (CREATE TABLE,
+INSERT, UPDATE/DELETE, ALTER/DROP; theory only, the database is read-only).
+A lesson has theory, examples and exercises (easy to hard) that are checked
+automatically. Plus a free playground. No accounts, nothing is stored.
 No MySQL Workbench, no local MySQL.
 
 Files:
 
-- `index.php` – course home (chapter cards)
-- `chapter.php` – theory, examples and exercise list of one chapter
+- `index.php` – course home (per chapter one card per lesson)
+- `chapter.php` – theory, examples and exercise list of one lesson
 - `exercise.php` – one exercise: editor, **Check**, **Run only**, hint, solution
 - `playground.php` – free SQL editor (any reading query, several statements)
 - `exam.php` – exam mode: the playground without navigation (see below)
-- `exam-groupby.php` – graded GROUP BY exam: login, 6 assignments with Check, autosave, submit (see below)
-- `exam-admin.php` – teacher page of that exam: who solved what, queries and results
+- `exam-groupby.php`, `exam-innerjoin.php` – graded exams (GROUP BY, INNER JOIN): login, 6 assignments with Check, autosave, submit (see below). Each is a few lines that name an exam set
+- `exampage.php` – the exam page itself, shared by those two (not a URL of its own: answers 404)
+- `exam-admin.php` – teacher page of the exams (`?set=` picks one): who solved what, queries and results
 - `examlib.php` – shared code of the two exam pages (login, storing answers, points)
 - `assets/exam.js`, `assets/exam-admin.js` – autosave/submit, and the hover cards of the teacher page
 - `exam-sets/*.php` – the exam assignments, same format as a chapter
@@ -23,9 +29,9 @@ Files:
   the relationships between them, drawn as SVG from `information_schema`
   (the drawing code is in `lib.php`; the exam page shows it as a popup)
 - `assets/erd.js` – hover highlighting, fit/save buttons and the popup of the diagram
-- `assets/favourites.js` – star exercises (exercise page, chapter list); the home page lists them. Stored in the browser (localStorage), per device
+- `assets/favourites.js` – star exercises (exercise page, lesson page); the home page lists them. Stored in the browser (localStorage), per device
 - `lib.php` – shared code: configuration, database, query runner, checker, layout
-- `chapters/*.php` – the course content, one file per chapter (see below)
+- `chapters/<n>-<slug>/` – the course content: one folder per chapter, one file per lesson (see below)
 - `assets/app.css`, `assets/app.js` – styling and the editor/submit script
 - `assets/sqlformat.js` – the SQL formatter behind the **Format** button
 - `tools/check-solutions.php` – command line: runs every reference solution
@@ -75,8 +81,17 @@ result is accepted, not only the reference solution.
 
 ## Adding or editing exercises
 
-Each chapter is a PHP file in `chapters/` that returns an array. Files are
-loaded in name order, so `08-something.php` becomes chapter 8.
+Each chapter is a folder in `chapters/` (`1-select/`, `2-erd/`, `3-crud/`),
+loaded in name order. Its `chapter.php` returns the chapter's `title` and
+`summary`; every other file that starts with a number is one lesson, again in
+name order: `chapters/2-erd/04-something.php` becomes lesson 2.4.
+
+Lessons are also numbered through the whole course (1.1 … 1.7 are 1 … 7, 2.1 is
+8, …). That number is the `c=` in the URLs and in the stored favourites, so
+adding a lesson in the middle of the course shifts the links of every lesson
+after it; adding one at the end of the last chapter shifts nothing.
+
+A lesson file returns an array:
 
 ```php
 <?php
@@ -91,7 +106,8 @@ return [
          'sql'   => "SELECT CompanyName FROM Customers WHERE Country = 'Germany';",
          'note'  => 'Optional HTML under the example.'],
     ],
-    'exercises' => [
+    'runnable' => true,    // false: the examples are not SELECTs (CRUD lessons): no playground link, not run by the checker
+    'exercises' => [       // optional: a lesson without exercises is theory only
         [
             'title'    => 'Products that are out of stock',
             'task'     => '<p>HTML with the assignment.</p>',
@@ -103,6 +119,111 @@ return [
     ],
 ];
 ```
+
+### Design exercises (the student draws an ERD)
+
+An exercise with `'type' => 'erd'` asks for a diagram instead of a query. The
+student gets a canvas (`assets/erd-editor.js`). It is a drawing only; no
+database is involved.
+
+- **Entity:** drag the Entity block onto the canvas (or click it), type the name.
+- **Attribute:** "+ attribute", a name and a **data type** from a list (INT,
+  DECIMAL, VARCHAR, TEXT, DATE, DATETIME, BOOLEAN). **PK** marks the key.
+- **Relationship:** drag a round connector on the side of the "one" entity onto
+  the "many" entity. The foreign key attribute is added (named and typed after
+  the key it points to); the student renames it when the task asks.
+- **One or many:** a click on an end of the line switches it. Bar + crow's foot
+  is one-to-many, two bars one-to-one, two crow's feet many-to-many (no foreign
+  key; the check then asks for a link table). The × in the middle removes it.
+- **Colour:** the dot in an entity's bar. Not checked.
+
+**Check** compares the drawing with the model design in `solution`.
+
+```php
+[
+    'type'     => 'erd',
+    'title'    => 'One-to-many',
+    'task'     => '<p>Draw <code>Teams</code> (...) and <code>Players</code> (...). The foreign key is called <code>TeamID</code>.</p>',
+    'hint'     => 'HTML, optional.',
+    'starter'  => "Teams: TeamID int PK, Name varchar",      // optional: entities already on the canvas
+    'solution' => "Teams: TeamID int PK, Name varchar, City varchar\nPlayers: PlayerID int PK, Name varchar, TeamID int > Teams",
+],
+```
+
+You write `solution` (and `starter`) as text, in the notation of "Diagrams in a
+lesson" below. The editor stores the student's drawing in the same notation,
+with place and colour of each entity added (`Teams @24,24 #green: ...`); the
+**Text** button of the editor shows it.
+
+Compared: the tables, the columns of each table, the primary keys, the foreign
+keys (which column points to which table), the ends of each relationship
+(one-to-many or one-to-one) and the **kind of data type** of every column that
+has a type in the model design. Kinds: whole number (`int`, `smallint`, ...),
+decimal (`decimal`, `float`, ...), text (`varchar` and `text` count as the
+same), `date`, `datetime`, `boolean`. Leave the type out in `solution` and that
+column's type is free.
+
+Free: where the entities stand, their colours, the order of tables and columns,
+capitals, underscores (`first_name` = `FirstName`) and singular or plural table
+names (`Team` = `Teams`). The names themselves must match, so **name every
+table and column in the task**, and describe values so that the type follows
+("a whole number", "day and time"). The verdict names the first difference
+("Players and Teams are not linked yet", "the foreign key is on the wrong
+side", "the data type of Price is not right", ...) without showing the model
+design; that is under "Show solution". Lesson 2.1 has twelve of these.
+
+**Projects.** A project is a lesson of chapter 2 whose `intro` tells one case
+and whose exercises are steps: each step's `starter` is the `solution` of the
+step before it, so the diagram grows and a mistake in one step does not follow
+the student to the next (`chapters/2-erd/02-project-hotel.php` is a good one to
+copy). Add a project as the next numbered file in `chapters/2-erd/`. Mind that
+this shifts the `c=` of the CRUD lessons after it (see above).
+
+The same type works in an exam set (`exam-sets/*.php`): the drawing is
+autosaved like a query, and the teacher page shows the student's diagram next
+to the model design.
+
+### Diagrams in a lesson
+
+Write an `<erd>` tag anywhere in a lesson's `intro`, an example's `note` or an
+exercise's `task`; the page draws it in the style of the database diagram
+(PK/FK tags, crow's foot lines, hover highlighting).
+
+Real tables of the course database, always up to date with the database:
+
+```html
+<erd tables="Orders, OrderDetails, Products"></erd>
+<erd tables="Orders, Customers" columns="keys"></erd>   <!-- only the PK / FK columns -->
+```
+
+A design of your own, one table per line:
+
+```html
+<erd>
+Members: MemberID PK, FirstName, LastName, Email varchar(100)
+Loans: LoanID PK, MemberID > Members, BookID > Books, LoanDate date
+Books: BookID PK, Title
++ Authors: AuthorID PK, Name
+</erd>
+```
+
+- `Table: column, column, ...`
+- A column is a name, optionally followed by a data type and `PK`.
+- `> Table` makes it a foreign key to that table's primary key
+  (`> Table.Column` for another column). A table may point to itself.
+- `UNIQUE` after a foreign key draws a one-to-one relationship (a bar at both ends).
+- `Table #green: ...` colours the table: blue (default), green, orange, purple,
+  red, teal, grey.
+- A line `Students <> Courses` draws a many-to-many relationship without a
+  link table (a crow's foot at both ends), for a first sketch.
+- Tables are placed left to right in the order written. A line that starts
+  with `+` goes under the previous table. Lines look best between neighbours,
+  so write linked tables next to each other.
+- A wide diagram is scaled down to the width of the text; four tables side by
+  side still read well.
+
+A mistake (unknown table, unreadable line) shows as a red box on the page, and
+`tools/check-solutions.php` reports it as a failure.
 
 Rules of thumb: a solution must return at least 1 and at most 2000 rows; an
 `ordered` exercise must have a deterministic order (add a second sort key and
@@ -133,7 +254,7 @@ it alone; `erd.php` is not used during the exam). Hand out
 `https://<your-site>/exam.php` during the exam; the course itself stays online
 at the other URLs, so hide or rename it if students must not open it.
 
-## Graded exam: GROUP BY
+## Graded exams: GROUP BY and INNER JOIN
 
 `exam-groupby.php` is a graded exam with six GROUP BY assignments
 (`exam-sets/group-by.php`, easy to hard, 10 points each; give an exercise
@@ -216,9 +337,27 @@ keeps its own copy: an editor that comes up empty gets the text back.
 - **Download CSV**: student number, e-mail, names, total, and per assignment
   points, status, Checks, answer and note (`;`-separated, opens in Excel).
 
-Reset before a new group: delete `exam-data/group-by-*.json`. A new exam is a
-new file in `exam-sets/` plus copies of `exam-groupby.php` and
-`exam-admin.php` with another `$set`; `php tools/check-solutions.php` checks
+Reset before a new group: delete `exam-data/group-by-*.json` (or
+`inner-join-*.json`).
+
+**Two exams exist:** `exam-groupby.php` (`exam-sets/group-by.php`) and
+`exam-innerjoin.php` (`exam-sets/inner-join.php`: six assignments that need
+only inner joins, from two tables to four, one self join, the last one
+sorted). Everything in this section holds for both; in file names and URLs
+read `inner-join` for `group-by`. The teacher page shows one exam at a time:
+`exam-admin.php?set=inner-join`, or the "Exam:" links at the top. Each exam
+has its own password, students, days and results.
+
+**A new exam** is two files: the assignments in `exam-sets/<name>.php` (copy
+one of the two) and a page `exam-<name>.php` of three lines:
+
+```php
+<?php
+$set = '<name>';
+require __DIR__ . '/exampage.php';
+```
+
+The teacher page finds it by itself. `php tools/check-solutions.php` checks
 exam solutions too.
 
 ## Connection settings
@@ -240,11 +379,11 @@ its lines; rename it back before uploading.
    all `*.php` files, `assets/`, `chapters/`, `tools/`, `exam-sets/`, `exam-data/`
    (only its `.htaccess`; make it writable), `.htaccess` and `.env`,
    to the web root (or a sub folder such as `/sql/`).
-4. Open the URL. The home page must show 7 chapters; the playground must list
+4. Open the URL. The home page must show 3 chapters with 18 lessons; the playground must list
    13 tables.
 
 Check once that `https://<your-site>/.env` and
-`https://<your-site>/chapters/01-select.php` give a 403.
+`https://<your-site>/chapters/1-select/01-select.php` give a 403.
 
 ## B. Run it with ddev (own laptop / classroom LAN)
 
@@ -364,7 +503,7 @@ If it still happens:
 
 ## For students
 
-- Start on the home page, pick a chapter, read the theory, try the examples
+- Start on the home page, pick a lesson, read the theory, try the examples
   ("Open in playground"), then go through the exercises one by one.
 - On an exercise: type one query, press **Check** or **Ctrl+Enter**
   (⌘+Enter on Mac). **Run only** shows the result without checking.

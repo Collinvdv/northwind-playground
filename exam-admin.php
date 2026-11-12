@@ -1,15 +1,15 @@
 <?php
 /**
- * Teacher page of the GROUP BY exam: every student with the status and points
+ * Teacher page of the graded exams (?set= picks one of exam-sets/): every student with the status and points
  * per assignment (hover a cell for the assignment and the submitted query),
  * a detail view that runs a student's answer again and shows its actual
  * result next to the expected one, points that overrule the automatic ones,
  * the history of every Check, and a CSV export.
  *
  * Protected by EXAM_ADMIN_PASS in .env; without it the page answers 403.
- *   exam-admin.php?day=<Y-m-d>               overview of one exam day (&refresh=1 reloads every 15 s)
- *   exam-admin.php?day=<Y-m-d>&s=<id>&q=<n>  one student, one assignment
- *   exam-admin.php?day=<Y-m-d>&csv=1         download that day's answers
+ *   exam-admin.php?set=<set>&day=<Y-m-d>               overview of one exam day (&refresh=1 reloads every 15 s)
+ *   exam-admin.php?set=<set>&day=<Y-m-d>&s=<id>&q=<n>  one student, one assignment
+ *   exam-admin.php?set=<set>&day=<Y-m-d>&csv=1         download that day's answers
  * Without day: today, or the last day with submissions.
  *   POST op=points|clear-points|allow-login|reopen|delete|restore|submit-all|exam-password
  */
@@ -18,7 +18,13 @@ declare(strict_types=1);
 require __DIR__ . '/lib.php';
 require __DIR__ . '/examlib.php';
 
-$set = 'group-by';
+// Which exam: ?set=<file in exam-sets/>, by default the first one.
+$sets = array_map(fn(string $f) => basename($f, '.php'), glob(__DIR__ . '/exam-sets/*.php') ?: []);
+if (!$sets) {
+    notFound('Exam set');
+}
+$set = in_array($_GET['set'] ?? '', $sets, true) ? (string) $_GET['set'] : $sets[0];
+$base = 'exam-admin.php?set=' . $set;
 $exam = loadExamSet($set);
 $count = count($exam['exercises']);
 
@@ -33,14 +39,14 @@ $isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $loginError = '';
 if ($isPost && isset($_POST['logout'])) {
     unset($_SESSION['exam_admin']);
-    header('Location: exam-admin.php', true, 303);
+    header('Location: ' . $base, true, 303);
     exit;
 }
 if ($isPost && isset($_POST['password'])) {
     if (hash_equals($config['EXAM_ADMIN_PASS'], (string) $_POST['password'])) {
         session_regenerate_id(true);
         $_SESSION['exam_admin'] = true;
-        header('Location: exam-admin.php', true, 303);
+        header('Location: ' . $base, true, 303);
         exit;
     }
     sleep(1);                 // slow down guessing
@@ -74,7 +80,7 @@ examMigrateLegacy($set);
 $days = examDays($set);
 $today = date('Y-m-d');
 $day = examDay((string) ($_REQUEST['day'] ?? (isset($days[$today]) || !$days ? $today : array_key_first($days))));
-$self = 'exam-admin.php?day=' . $day;
+$self = $base . '&day=' . $day;
 
 // ---------------------------------------------------------------------------
 // Teacher actions (POST, then back to the page they came from).
@@ -172,7 +178,13 @@ if ($id !== '') {
     [$total, $max] = examTotal($student, $exam);
 
     $resultsHtml = '';
-    if (trim($sql) !== '') {
+    if (trim($sql) !== '' && $exercise['type'] === 'erd') {
+        // A design assignment: the student's drawing next to the model design, no database.
+        $check = checkAnswer(null, $exercise, $sql);
+        $resultsHtml = '<div class="verdict ' . h($check['status']) . '"><strong>' . $labels[$check['status']] . '</strong> ' . h($check['message']) . '</div>'
+            . '<div class="result"><div class="head"><span>Student\'s design</span></div>' . renderErdPreview($sql) . '</div>'
+            . '<div class="result"><div class="head"><span>Model design</span></div>' . renderErdPreview($exercise['solution']) . '</div>';
+    } elseif (trim($sql) !== '') {
         $slot = acquireDbSlot($config['DB_SLOTS']);
         if ($slot === null) {
             $resultsHtml = busyNotice();
@@ -327,10 +339,18 @@ pageStart('Exam results', 'exam', null, false, 'exam-admin');
     <?php endif; ?>
     <form method="post"><button type="submit" name="logout" value="1" class="link">Log out</button></form>
   </div>
+  <?php if (count($sets) > 1): ?>
+  <nav class="admin-days" aria-label="Exams">
+    <span class="hint">Exam:</span>
+    <?php foreach ($sets as $name): ?>
+      <a href="exam-admin.php?set=<?= h($name) ?>"<?= $name === $set ? ' class="current" aria-current="page"' : '' ?>><?= h(loadExamSet($name)['title']) ?></a>
+    <?php endforeach; ?>
+  </nav>
+  <?php endif; ?>
   <nav class="admin-days" aria-label="Exam days">
     <span class="hint">Day:</span>
     <?php foreach (isset($days[$today]) ? $days : [$today => 0] + $days as $d => $n): ?>
-      <a href="exam-admin.php?day=<?= h($d) ?>"<?= $d === $day ? ' class="current" aria-current="page"' : '' ?>><?= h(date('D d/m/Y', strtotime($d))) ?> <small><?= $n ?></small></a>
+      <a href="<?= h($base) ?>&amp;day=<?= h($d) ?>"<?= $d === $day ? ' class="current" aria-current="page"' : '' ?>><?= h(date('D d/m/Y', strtotime($d))) ?> <small><?= $n ?></small></a>
     <?php endforeach; ?>
   </nav>
   <form method="post" class="admin-password">

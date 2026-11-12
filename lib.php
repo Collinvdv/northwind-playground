@@ -2,7 +2,7 @@
 /**
  * Northwind SQL course: shared code.
  *
- * Included by index.php (course home), chapter.php, exercise.php,
+ * Included by index.php (course home), chapter.php (one lesson), exercise.php,
  * playground.php (also behind exam.php) and tools/check-solutions.php.
  * No dependencies.
  *
@@ -624,41 +624,74 @@ function runScript(PDO $pdo, string $sqlInput): array
 // Course content
 // ---------------------------------------------------------------------------
 
-/** All chapters, in file order, with 'number' (1-based) and 'slug' added. */
-function loadChapters(): array
+/**
+ * The course is a list of chapters (SELECT, ERD, CRUD, ...), each a folder
+ * chapters/<n>-<slug>/ holding chapter.php (title, summary) and one file per
+ * lesson (01-something.php: theory, examples, exercises).
+ *
+ * Lessons are also numbered through the whole course, in folder + file order:
+ * that 'number' is the c= of chapter.php?c= and exercise.php?c=&e= and the
+ * first half of a favourite's id. The first chapter's lessons therefore keep
+ * the numbers (and URLs) they had when every lesson was a chapter of its own.
+ * On the pages a lesson is shown as 'label' = chapter.lesson ("2.1").
+ *
+ * Returns [['number', 'slug', 'title', 'summary', 'lessons' => [...]], ...].
+ */
+function loadCourse(): array
 {
-    static $chapters = null;
-    if ($chapters !== null) {
-        return $chapters;
+    static $course = null;
+    if ($course !== null) {
+        return $course;
     }
-    $chapters = [];
-    $files = glob(__DIR__ . '/chapters/*.php') ?: [];
-    sort($files);
-    foreach ($files as $i => $file) {
-        $chapter = require $file;
+    $course = [];
+    $dirs = glob(__DIR__ . '/chapters/*', GLOB_ONLYDIR) ?: [];
+    sort($dirs, SORT_NATURAL);
+    $n = 0;
+    foreach ($dirs as $i => $dir) {
+        $chapter = (is_file("$dir/chapter.php") ? require "$dir/chapter.php" : []) + ['title' => basename($dir), 'summary' => ''];
         $chapter['number'] = $i + 1;
-        $chapter['slug'] = preg_replace('/^\d+-|\.php$/', '', basename($file));
-        $chapter['examples'] = $chapter['examples'] ?? [];
-        $chapter['exercises'] = $chapter['exercises'] ?? [];
-        foreach ($chapter['exercises'] as $j => &$ex) {
-            $ex['number'] = $j + 1;
-            $ex['ordered'] = $ex['ordered'] ?? false;
-            $ex['columns'] = $ex['columns'] ?? false;
+        $chapter['slug'] = preg_replace('/^\d+-/', '', basename($dir));
+        $chapter['lessons'] = [];
+        $files = glob("$dir/[0-9]*.php") ?: [];
+        sort($files);
+        foreach ($files as $j => $file) {
+            $lesson = require $file;
+            $lesson['number'] = ++$n;
+            $lesson['chapter'] = $chapter['number'];
+            $lesson['chapterTitle'] = $chapter['title'];
+            $lesson['label'] = $chapter['number'] . '.' . ($j + 1);
+            $lesson['slug'] = preg_replace('/^\d+-|\.php$/', '', basename($file));
+            $lesson['runnable'] = $lesson['runnable'] ?? true;   // false: examples are not SELECTs (no playground link)
+            $lesson['examples'] = $lesson['examples'] ?? [];
+            $lesson['exercises'] = $lesson['exercises'] ?? [];
+            foreach ($lesson['exercises'] as $k => &$ex) {
+                $ex['number'] = $k + 1;
+                $ex['type'] = $ex['type'] ?? 'sql';   // 'erd': the student draws a design (checkErdExercise)
+                $ex['ordered'] = $ex['ordered'] ?? false;
+                $ex['columns'] = $ex['columns'] ?? false;
+            }
+            unset($ex);
+            $chapter['lessons'][] = $lesson;
         }
-        unset($ex);
-        $chapters[] = $chapter;
+        $course[] = $chapter;
     }
-    return $chapters;
+    return $course;
 }
 
-function getChapter(int $c): ?array
+/** Every lesson of the course in order; index + 1 is the lesson's 'number'. */
+function loadLessons(): array
 {
-    return loadChapters()[$c - 1] ?? null;
+    return array_merge([], ...array_column(loadCourse(), 'lessons'));
+}
+
+function getLesson(int $c): ?array
+{
+    return loadLessons()[$c - 1] ?? null;
 }
 
 function getExercise(int $c, int $e): ?array
 {
-    return getChapter($c)['exercises'][$e - 1] ?? null;
+    return getLesson($c)['exercises'][$e - 1] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -853,14 +886,35 @@ const ERD_ROW_H = 18;    // height of one column row
 const ERD_HEAD_H = 26;   // height of the table name bar
 const ERD_V_GAP = 36;    // vertical space between boxes in one column
 const ERD_PAD = 24;      // margin around the drawing
+const ERD_EDITOR_Y_SCALE = 0.62;   // row height here / row height in assets/erd-editor.js
+/** Colours of a table's name bar ("Table #green:" in a design); the same list is in assets/erd-editor.js. */
+const ERD_COLORS = ['blue' => '#1d4ed8', 'green' => '#15803d', 'orange' => '#c2410c', 'purple' => '#7e22ce', 'red' => '#b91c1c', 'teal' => '#0f766e', 'grey' => '#475569'];
 
 /**
  * Box per table: ['x','y','w','h'], plus the drawing size.
+ * $layout replaces ERD_LAYOUT (diagrams in lessons, see lessonHtml()).
  * Returns [boxes, width, height].
  */
-function erdBoxes(array $schema): array
+function erdBoxes(array $schema, ?array $layout = null, ?array $positions = null): array
 {
-    $columns = ERD_LAYOUT;
+    // Free placement (a design drawn in the editor): every table has its own spot.
+    if ($positions !== null && !array_diff_key($schema['tables'], $positions)) {
+        $minX = min(array_column($positions, 0));
+        $minY = min(array_column($positions, 1));
+        $boxes = [];
+        $width = $height = 0;
+        foreach ($schema['tables'] as $table => $cols) {
+            $h = ERD_HEAD_H + max(1, count($cols)) * ERD_ROW_H + 6;
+            // The editor's rows are taller than the rows drawn here: shrink the vertical distances with them.
+            $x = ERD_PAD + $positions[$table][0] - $minX;
+            $y = ERD_PAD + (int) round(($positions[$table][1] - $minY) * ERD_EDITOR_Y_SCALE);
+            $boxes[$table] = ['x' => $x, 'y' => $y, 'w' => ERD_BOX_W, 'h' => $h];
+            $width = max($width, $x + ERD_BOX_W);
+            $height = max($height, $y + $h);
+        }
+        return [$boxes, $width + ERD_PAD, $height + ERD_PAD];
+    }
+    $columns = $layout ?? ERD_LAYOUT;
     $placed = array_merge(...$columns);
     $extra = array_values(array_diff(array_keys($schema['tables']), $placed));
     foreach (array_chunk($extra, 3) as $chunk) {
@@ -901,10 +955,10 @@ function erdFitType(string $name, string $type): string
     return $chars < 4 ? '' : substr($type, 0, $chars - 1) . '…';
 }
 
-/** The whole diagram as an <svg> element. */
-function renderErd(array $schema): string
+/** The whole diagram as an <svg> element. $layout: columns of table names (default: ERD_LAYOUT). */
+function renderErd(array $schema, ?array $layout = null, ?array $positions = null): string
 {
-    [$boxes, $width, $height] = erdBoxes($schema);
+    [$boxes, $width, $height] = erdBoxes($schema, $layout, $positions);
     $keys = keyColumns($schema);
 
     $rowIndex = [];
@@ -939,7 +993,33 @@ function renderErd(array $schema): string
     $out .= '<rect width="100%" height="100%" fill="#fff"/>';
 
     // Relationships first, so the boxes paint over them.
-    foreach ($schema['foreign'] ?? [] as [$table, $col, $refTable, $refCol]) {
+    // Many-to-many relationships without a link table: name bar to name bar, a crow's foot at both ends.
+    foreach ($schema['many'] ?? [] as [$table, $refTable]) {
+        if (!isset($boxes[$table], $boxes[$refTable])) {
+            continue;
+        }
+        $a = $boxes[$table];
+        $b = $boxes[$refTable];
+        [$da, $db] = $a['x'] < $b['x'] ? [1, -1] : ($a['x'] > $b['x'] ? [-1, 1] : [1, 1]);
+        $ax = $a['x'] + ($da > 0 ? $a['w'] : 0);
+        $ay = $a['y'] + ERD_HEAD_H / 2;
+        $bx = $b['x'] + ($db > 0 ? $b['w'] : 0);
+        $by = $b['y'] + ERD_HEAD_H / 2;
+        $x1 = $ax + $da * 16;
+        $x2 = $bx + $db * 16;
+        $k = max(50, abs($x2 - $x1) / 2);
+        $out .= '<g class="rel" data-from="' . h($table) . '" data-to="' . h($refTable) . '">';
+        $out .= '<title>' . h("$table and $refTable: many-to-many") . '</title>';
+        $out .= sprintf('<path d="M%.1f %.1f C%.1f %.1f %.1f %.1f %.1f %.1f"/>', $x1, $ay, $x1 + $da * $k, $ay, $x2 + $db * $k, $by, $x2, $by);
+        foreach ([-7, 0, 7] as $dy) {
+            $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x1, $ay, $ax, $ay + $dy);
+            $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x2, $by, $bx, $by + $dy);
+        }
+        $out .= '</g>';
+    }
+    foreach ($schema['foreign'] ?? [] as $foreign) {
+        [$table, $col, $refTable, $refCol] = $foreign;
+        $one = $foreign[4] ?? false;     // a UNIQUE foreign key: one-to-one
         if (!isset($boxes[$table], $boxes[$refTable])) {
             continue;
         }
@@ -963,11 +1043,17 @@ function renderErd(array $schema): string
             $x1, $ay, $x1 + $da * $k, $ay, $x2 + $db * $k, $by, $x2, $by);
 
         $out .= '<g class="rel" data-from="' . h($table) . '" data-to="' . h($refTable) . '">';
-        $out .= '<title>' . h("$table.$col → $refTable.$refCol  (many $table rows per $refTable row)") . '</title>';
+        $out .= '<title>' . h("$table.$col → $refTable.$refCol  (" . ($one ? 'one' : 'many') . " $table row" . ($one ? '' : 's') . " per $refTable row)") . '</title>';
         $out .= '<path d="' . $path . '"/>';
-        // Crow's foot at the child ("many") end.
-        foreach ([-7, 0, 7] as $dy) {
-            $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x1, $ay, $ax, $ay + $dy);
+        if ($one) {
+            // One-to-one: a bar at the child end too.
+            $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x1, $ay, $ax, $ay);
+            $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $ax + $da * 7, $ay - 7, $ax + $da * 7, $ay + 7);
+        } else {
+            // Crow's foot at the child ("many") end.
+            foreach ([-7, 0, 7] as $dy) {
+                $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x1, $ay, $ax, $ay + $dy);
+            }
         }
         // Stub and bar at the parent ("one") end.
         $out .= sprintf('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>', $x2, $by, $bx, $by);
@@ -979,7 +1065,8 @@ function renderErd(array $schema): string
         $w = $b['w'];
         $out .= '<g class="tbl" data-table="' . h($table) . '" transform="translate(' . $b['x'] . ' ' . $b['y'] . ')">';
         $out .= '<rect class="box" width="' . $w . '" height="' . $b['h'] . '" rx="6"/>';
-        $out .= '<path class="head" d="M0 6 Q0 0 6 0 H' . ($w - 6) . ' Q' . $w . ' 0 ' . $w . ' 6 V' . ERD_HEAD_H . ' H0 Z"/>';
+        $fill = ERD_COLORS[$schema['colors'][$table] ?? ''] ?? null;
+        $out .= '<path class="head"' . ($fill ? ' style="fill:' . $fill . '"' : '') . ' d="M0 6 Q0 0 6 0 H' . ($w - 6) . ' Q' . $w . ' 0 ' . $w . ' 6 V' . ERD_HEAD_H . ' H0 Z"/>';
         $out .= '<text class="name" x="' . ($w / 2) . '" y="17.5" text-anchor="middle">' . h($table) . '</text>';
         foreach ($schema['tables'][$table] as $i => [$col, $type]) {
             $top = ERD_HEAD_H + 3 + $i * ERD_ROW_H;
@@ -1037,6 +1124,502 @@ function renderErdDialog(array $schema, string $dbName): string
         . '<p class="lead">' . renderErdLegend($schema, $dbName) . '</p>'
         . '<div class="erd-wrap fit">' . renderErd($schema) . '</div>'
         . '</dialog>';
+}
+
+// ---------------------------------------------------------------------------
+// Diagrams inside lessons: the <erd> tag
+// ---------------------------------------------------------------------------
+
+/**
+ * Lesson HTML (intro, example notes, exercise tasks) may contain <erd> tags;
+ * each one is replaced by a diagram drawn by renderErd().
+ *
+ * 1. Tables of the course database, as they really are:
+ *
+ *      <erd tables="Orders, OrderDetails, Products"></erd>
+ *      <erd tables="Orders, Customers" columns="keys"></erd>     only PK / FK columns
+ *
+ * 2. A design of your own, one table per line:
+ *
+ *      <erd>
+ *      Members: MemberID PK, FirstName, LastName, Email varchar(100)
+ *      Loans: LoanID PK, MemberID > Members, BookID > Books, LoanDate date
+ *      Books: BookID PK, Title
+ *      + Authors: AuthorID PK, Name
+ *      </erd>
+ *
+ *    Table: column, column, ... A column is a name, optionally followed by a
+ *    data type, PK, and "> Table" (foreign key to that table's primary key) or
+ *    "> Table.Column" ("->" works too). UNIQUE after a foreign key makes the
+ *    relationship one-to-one. "Table #green: ..." colours the table (blue,
+ *    green, orange, purple, red, teal, grey). A line "A <> B" draws a
+ *    many-to-many relationship without a link table. Tables are placed left to right in the order written;
+ *    a line that starts with + goes under the previous table instead.
+ *    Lines are drawn best between neighbours, so write linked tables next to
+ *    each other.
+ *
+ * A mistake (unknown table, bad line) shows as a red box on the page and is
+ * reported by tools/check-solutions.php.
+ */
+function lessonHtml(string $html, array $schema): string
+{
+    if (stripos($html, '<erd') === false) {
+        return $html;
+    }
+    return preg_replace_callback('/<erd\b([^>]*)>(.*?)<\/erd>/is', function (array $m) use ($schema): string {
+        preg_match_all('/([\w-]+)\s*=\s*"([^"]*)"/', $m[1], $pairs, PREG_SET_ORDER);
+        $attr = [];
+        foreach ($pairs as [, $name, $value]) {
+            $attr[strtolower($name)] = html_entity_decode($value);
+        }
+        $layout = null;
+        if (isset($attr['tables'])) {
+            $diagram = erdSubset($schema, preg_split('/\s*,\s*/', trim($attr['tables']), -1, PREG_SPLIT_NO_EMPTY));
+        } else {
+            // Only real tags are dropped: "A <> B" (many-to-many) and "x > Table" belong to the notation.
+            $diagram = parseErd(html_entity_decode(preg_replace('/<\/?[a-z][^>]*>/i', '', $m[2])));
+            $layout = is_array($diagram) ? $diagram['layout'] : null;
+        }
+        if (is_string($diagram)) {
+            return '<div class="erd-error">Diagram: ' . h($diagram) . '</div>';
+        }
+        if (($attr['columns'] ?? '') === 'keys') {
+            $keys = keyColumns($diagram);
+            foreach ($diagram['tables'] as $table => $cols) {
+                $diagram['tables'][$table] = array_values(array_filter($cols, fn($c) => isset($keys[$table][$c[0]])));
+            }
+        }
+        return '<div class="erd-wrap erd-inline">' . renderErd($diagram, $layout) . '</div>';
+    }, $html);
+}
+
+/** The named tables of the course database as a schema of their own, or an error text. */
+function erdSubset(array $schema, array $names): array|string
+{
+    $byLower = [];
+    foreach (array_keys($schema['tables']) as $table) {
+        $byLower[strtolower($table)] = $table;
+    }
+    $out = ['tables' => [], 'primary' => [], 'foreign' => []];
+    foreach ($names as $name) {
+        $table = $byLower[strtolower($name)] ?? null;
+        if ($table === null) {
+            return $schema['tables'] ? "table \"$name\" does not exist in the database." : 'the database is not reachable.';
+        }
+        $out['tables'][$table] = $schema['tables'][$table];
+        $out['primary'][$table] = $schema['primary'][$table] ?? [];
+    }
+    // Foreign keys to tables outside the selection keep their FK tag, without a line.
+    $out['foreign'] = array_values(array_filter($schema['foreign'] ?? [], fn($f) => isset($out['tables'][$f[0]])));
+    return $out;
+}
+
+/**
+ * The text notation of lessonHtml() as ['tables', 'primary', 'foreign', 'layout'], or an error text.
+ * $lenient (the live drawing of a design exercise, where the last line is
+ * usually half typed): what cannot be read is skipped instead, and the first
+ * such problem is returned in 'problem'.
+ */
+function parseErd(string $text, bool $lenient = false): array|string
+{
+    $out = ['tables' => [], 'primary' => [], 'foreign' => [], 'many' => [], 'layout' => [], 'positions' => [], 'colors' => [], 'problem' => null];
+    $manyRefs = [];
+    $fail = function (string $message) use (&$out, $lenient): ?string {
+        $out['problem'] ??= $message;
+        return $lenient ? null : $message;
+    };
+    $refs = [];
+    foreach (preg_split('/\R/', $text) as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $stack = $line[0] === '+';
+        // "A <> B": a many-to-many relationship as it is drawn before the link table exists.
+        if (preg_match('/^(\w+)\s*<>\s*(\w+)$/', $line, $m)) {
+            $manyRefs[] = [$m[1], $m[2]];
+            continue;
+        }
+        if (!preg_match('/^\+?\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)\s*)?(?:#(\w+)\s*)?:\s*(.*)$/', $line, $m)) {
+            if (($error = $fail("cannot read the line \"$line\". Write: Table: column, column, ...")) !== null) {
+                return $error;
+            }
+            continue;
+        }
+        [, $table, $x, $y, $color, $columns] = $m;
+        if (isset($out['tables'][$table])) {
+            if (($error = $fail("table \"$table\" is defined twice.")) !== null) {
+                return $error;
+            }
+            continue;
+        }
+        $out['tables'][$table] = [];
+        if ($x !== '') {
+            $out['positions'][$table] = [(int) $x, (int) $y];   // "Table @x,y:" as the editor writes it
+        }
+        if ($color !== '') {
+            $out['colors'][$table] = strtolower($color);        // "Table #green:"
+        }
+        foreach (preg_split('/,(?![^()]*\))/', $columns) as $column) {
+            if (!preg_match('/^(\S+)\s*(.*)$/', trim($column), $c)) {
+                continue;
+            }
+            [, $name, $rest] = $c;
+            if (preg_match('/-?>\s*(\w+)(?:\.(\w+))?/', $rest, $r)) {
+                $rest = str_replace($r[0], '', $rest);
+                // UNIQUE: at most one row here per row there, a one-to-one relationship.
+                $refs[] = [$table, $name, $r[1], $r[2] ?? null, (bool) preg_match('/\bUNIQUE\b/i', $rest)];
+            }
+            if (preg_match('/\bPK\b/i', $rest)) {
+                $out['primary'][$table][] = $name;
+            }
+            $type = trim(preg_replace('/\b(PK|FK|UNIQUE)\b/i', '', $rest));
+            $out['tables'][$table][] = [$name, strtolower($type)];
+        }
+        if ($stack && $out['layout']) {
+            $out['layout'][count($out['layout']) - 1][] = $table;
+        } else {
+            $out['layout'][] = [$table];
+        }
+    }
+    if (!$out['tables']) {
+        return $out['problem'] ?? 'no tables. Write one line per table: Table: column, column, ...';
+    }
+    // "> team" finds the table Teams: names are matched as erdName() compares them.
+    $tableByName = [];
+    foreach (array_keys($out['tables']) as $table) {
+        $tableByName[erdName($table, true)] ??= $table;
+    }
+    foreach ($manyRefs as [$a, $b]) {
+        $ta = $tableByName[erdName($a, true)] ?? null;
+        $tb = $tableByName[erdName($b, true)] ?? null;
+        if ($ta === null || $tb === null) {
+            if (($error = $fail("the many-to-many line $a <> $b names a table that is not in this diagram.")) !== null) {
+                return $error;
+            }
+            continue;
+        }
+        $out['many'][] = [$ta, $tb];
+    }
+    foreach ($refs as [$table, $column, $refName, $refColumn, $unique]) {
+        $refTable = $tableByName[erdName($refName, true)] ?? null;
+        if ($refTable === null) {
+            if (($error = $fail("$table.$column points to \"$refName\", which is not in this diagram.")) !== null) {
+                return $error;
+            }
+            continue;
+        }
+        $columnByName = [];
+        foreach ($out['tables'][$refTable] as [$name]) {
+            $columnByName[erdName($name)] ??= $name;
+        }
+        $wanted = $refColumn ?? $out['primary'][$refTable][0] ?? $column;
+        $refColumn = $columnByName[erdName($wanted)] ?? null;
+        if ($refColumn === null) {
+            if (($error = $fail("$table.$column points to $refTable.$wanted, but $refTable has no column \"$wanted\".")) !== null) {
+                return $error;
+            }
+            continue;
+        }
+        $out['foreign'][] = [$table, $column, $refTable, $refColumn, $unique];
+    }
+    return $out;
+}
+
+// ---------------------------------------------------------------------------
+// Design exercises: the student writes an ERD ('type' => 'erd')
+// ---------------------------------------------------------------------------
+
+/**
+ * A name as it is compared: case, spaces and underscores do not matter
+ * (first_name = FirstName), and for tables singular = plural (Category =
+ * Categories, Loan = Loans).
+ */
+function erdName(string $name, bool $table = false): string
+{
+    $n = preg_replace('/[^a-z0-9]/', '', strtolower($name));
+    if ($table) {
+        $n = preg_replace('/ies$/', 'y', $n, 1, $done);
+        if (!$done) {
+            $n = preg_replace('/s$/', '', $n);
+        }
+    }
+    return $n;
+}
+
+/**
+ * A data type as it is compared: the kind of value, not the exact type.
+ * varchar(40) = varchar(100) = text, int = smallint, decimal = float, datetime = timestamp.
+ */
+function erdTypeGroup(string $type): string
+{
+    $t = strtolower(trim(preg_replace('/\(.*$/', '', $type)));
+    return match (true) {
+        in_array($t, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true) => 'int',
+        in_array($t, ['decimal', 'numeric', 'float', 'double', 'real', 'money'], true) => 'decimal',
+        in_array($t, ['char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'string'], true) => 'text',
+        in_array($t, ['datetime', 'timestamp'], true) => 'datetime',
+        in_array($t, ['bool', 'boolean', 'bit'], true) => 'boolean',
+        default => $t,
+    };
+}
+
+/** A parsed design in comparable form: tables with columns (and their kind of type) and key, the foreign keys, the many-to-many lines. */
+function erdShape(array $design): array
+{
+    $shape = ['tables' => [], 'foreign' => [], 'many' => []];
+    foreach ($design['many'] ?? [] as [$a, $b]) {
+        $pair = [erdName($a, true), erdName($b, true)];
+        sort($pair);
+        $shape['many'][implode('<>', $pair)] = [$a, $b];
+    }
+    foreach ($design['tables'] as $table => $cols) {
+        $columns = [];
+        $types = [];
+        foreach ($cols as [$col, $type]) {
+            $columns[erdName($col)] = $col;
+            $types[erdName($col)] = erdTypeGroup($type);
+        }
+        $pk = array_map('erdName', $design['primary'][$table] ?? []);
+        sort($pk);
+        $shape['tables'][erdName($table, true)] = ['name' => $table, 'columns' => $columns, 'types' => $types, 'pk' => $pk];
+    }
+    foreach ($design['foreign'] as $foreign) {
+        [$table, $col, $refTable] = $foreign;
+        $shape['foreign'][erdName($table, true) . '.' . erdName($col)] = [erdName($table, true), erdName($refTable, true), $table, $col, $refTable, $foreign[4] ?? false];
+    }
+    return $shape;
+}
+
+/**
+ * Compare the student's design (the notation of parseErd()) with the model
+ * design in $exercise['solution']: same tables, same columns, same primary
+ * keys, same foreign keys with the same ends (one or many), and the same kind
+ * of data type for every column that has a type in the model design
+ * (erdTypeGroup()). The order and place of tables and columns are free. The message names the first difference without giving the answer away.
+ * Returns ['status' => correct|wrong|error|invalid, 'message', 'design' => ?parsed design].
+ */
+function checkErdExercise(array $exercise, string $text): array
+{
+    $out = ['status' => 'invalid', 'message' => '', 'design' => null];
+    if (trim($text) === '') {
+        $out['message'] = 'Draw your design first: start with an entity.';
+        return $out;
+    }
+    $model = parseErd($exercise['solution']);
+    if (is_string($model)) {
+        $out['status'] = 'error';
+        $out['message'] = 'The model design of this exercise is broken, tell your teacher: ' . $model;
+        return $out;
+    }
+    $design = parseErd($text);
+    if (is_string($design)) {
+        $out['status'] = 'error';
+        $out['message'] = ucfirst($design);
+        return $out;
+    }
+    $out['design'] = $design;
+    $out['status'] = 'wrong';
+    $m = erdShape($model);
+    $s = erdShape($design);
+
+    // Tables.
+    foreach ($s['tables'] as $key => $t) {
+        if (!isset($m['tables'][$key])) {
+            $out['message'] = "Table \"{$t['name']}\" is not in the model design. Use the table names from the task.";
+            return $out;
+        }
+    }
+    $mc = count($m['tables']);
+    $sc = count($s['tables']);
+    if ($mc !== $sc) {
+        $out['message'] = "The model design has $mc table" . ($mc === 1 ? '' : 's') . ", yours has $sc.";
+        return $out;
+    }
+
+    // A many-to-many line: fine as a first sketch, but tables cannot store it.
+    foreach ($s['many'] as $key => [$a, $b]) {
+        if (!isset($m['many'][$key])) {
+            $out['message'] = "$a and $b are linked many-to-many. Tables cannot store that directly: put a link table between them, with a one-to-many relationship to each side.";
+            return $out;
+        }
+    }
+    foreach ($m['many'] as $key => [$a, $b]) {
+        if (!isset($s['many'][$key])) {
+            $out['message'] = "$a and $b are not linked yet.";
+            return $out;
+        }
+    }
+
+    // A foreign key on the wrong side would otherwise be reported as a strange column.
+    $pairs = [];                                   // "from>to" of the model
+    foreach ($m['foreign'] as [$from, $to]) {
+        $pairs["$from>$to"] = true;
+    }
+    foreach ($s['foreign'] as [$from, $to, $table, , $refTable]) {
+        if ($from !== $to && isset($pairs["$to>$from"]) && !isset($pairs["$from>$to"])) {
+            $out['message'] = "The foreign key between $table and $refTable is on the wrong side. It belongs in the table on the \"many\" side.";
+            return $out;
+        }
+    }
+
+    // Columns, then the primary key, per table.
+    foreach ($s['tables'] as $key => $t) {
+        $expected = $m['tables'][$key];
+        foreach ($t['columns'] as $col => $name) {
+            if (!isset($expected['columns'][$col])) {
+                $out['message'] = "Table {$t['name']}: column \"$name\" is not in the model design. Does it belong in another table, or is the name different in the task?";
+                return $out;
+            }
+        }
+        $ec = count($expected['columns']);
+        $tc = count($t['columns']);
+        if ($ec !== $tc) {
+            $out['message'] = "Table {$t['name']}: $ec column" . ($ec === 1 ? '' : 's') . " expected, you have $tc.";
+            return $out;
+        }
+    }
+    foreach ($s['tables'] as $key => $t) {
+        if (!$t['pk']) {
+            $out['message'] = "Table {$t['name']} has no primary key. Mark it with PK.";
+            return $out;
+        }
+        if ($t['pk'] !== $m['tables'][$key]['pk']) {
+            $out['message'] = "Table {$t['name']}: the primary key is not right. Which column, or which columns together, are unique for every row?";
+            return $out;
+        }
+    }
+
+    // Foreign keys.
+    foreach ($s['foreign'] as $key => [$from, $to, $table, $col, $refTable]) {
+        if (isset($m['foreign'][$key]) && $m['foreign'][$key][1] === $to) {
+            continue;
+        }
+        if (isset($m['foreign'][$key])) {
+            $out['message'] = "$table.$col points to the wrong table.";
+        } else {
+            $out['message'] = "$table.$col should not be a foreign key to $refTable.";
+        }
+        return $out;
+    }
+    foreach ($m['foreign'] as $key => [$from, $to]) {
+        if (!isset($s['foreign'][$key])) {
+            $a = $s['tables'][$from]['name'];
+            $b = $s['tables'][$to]['name'];
+            $out['message'] = $from === $to
+                ? "Table $a should be linked to itself: a foreign key is missing."
+                : "$a and $b are not linked yet: a foreign key is missing.";
+            return $out;
+        }
+    }
+
+    // One or many at the end of each relationship.
+    foreach ($s['foreign'] as $key => [, , $table, , $refTable, $one]) {
+        if ($one !== $m['foreign'][$key][5]) {
+            $out['message'] = "Look at the ends of the relationship between $table and $refTable: one $refTable has "
+                . ($one ? 'one' : 'many') . " $table in your design. Is that what the task says?";
+            return $out;
+        }
+    }
+
+    // Data types: the kind of value must match wherever the model design gives a type.
+    foreach ($s['tables'] as $key => $t) {
+        foreach ($t['columns'] as $col => $name) {
+            $expected = $m['tables'][$key]['types'][$col];
+            if ($expected === '') {
+                continue;
+            }
+            if ($t['types'][$col] === '') {
+                $out['message'] = "Table {$t['name']}: attribute \"$name\" has no data type yet.";
+                return $out;
+            }
+            if ($t['types'][$col] !== $expected) {
+                $out['message'] = "Table {$t['name']}: the data type of \"$name\" is not right. What kind of value does it hold?";
+                return $out;
+            }
+        }
+    }
+
+    $out['status'] = 'correct';
+    $out['message'] = 'Correct!';
+    return $out;
+}
+
+/**
+ * Check an answer of either exercise type, in the shape of checkExercise()
+ * (plus 'design' for a design exercise). Used by the exam pages, where an
+ * exam set may mix queries and designs. $pdo is only needed for a query.
+ */
+function checkAnswer(?PDO $pdo, array $exercise, string $text): array
+{
+    if (($exercise['type'] ?? 'sql') === 'erd') {
+        return checkErdExercise($exercise, $text) + ['student' => null, 'expected' => null];
+    }
+    return checkExercise($pdo, $exercise, $text);
+}
+
+/** The editor text as it is stored and checked: a design keeps its lines, a query is tidied by normalizeSql(). */
+function answerText(array $exercise, string $text): string
+{
+    return ($exercise['type'] ?? 'sql') === 'erd' ? trim(str_replace("\r", '', $text)) : normalizeSql($text);
+}
+
+/** The diagram of a parsed design, as in a lesson. */
+function renderErdDesign(array $design): string
+{
+    return '<div class="erd-wrap erd-inline">' . renderErd($design, $design['layout'], $design['positions'] ?: null) . '</div>';
+}
+
+/**
+ * Verdict + the student's diagram (also sent alone to fetch() requests).
+ * $diagram = false: the page shows the design in the editor already.
+ */
+function renderErdCheck(array $check, bool $diagram = true): string
+{
+    $labels = ['correct' => 'Correct', 'wrong' => 'Not yet', 'error' => 'Error', 'invalid' => 'Cannot check'];
+    $out = '<div class="verdict ' . h($check['status']) . '"><strong>' . $labels[$check['status']] . '</strong> ' . h($check['message']) . '</div>';
+    if ($diagram && $check['design'] !== null) {
+        $out .= renderErdDesign($check['design']);
+    }
+    return $out;
+}
+
+/** A design as a drawing, whatever state it is in (teacher page, submitted exam): what cannot be read is named under it. */
+function renderErdPreview(string $text): string
+{
+    if (trim($text) === '') {
+        return '';
+    }
+    $design = parseErd($text, true);
+    if (is_string($design)) {
+        return '<div class="result"><div class="notice">' . h(ucfirst($design)) . '</div></div>';
+    }
+    return renderErdDesign($design)
+        . ($design['problem'] !== null ? '<div class="result"><div class="notice">Not drawn yet: ' . h($design['problem']) . '</div></div>' : '');
+}
+
+/** Sidebar of a design exercise: how the editor works, instead of the table list. */
+function renderErdHelp(): string
+{
+    return '<h2>How to draw</h2><div class="erd-help"><ul>'
+        . '<li><strong>Entity:</strong> drag the Entity block onto the canvas (or click it) and type its name.</li>'
+        . '<li><strong>Attribute:</strong> press "+ attribute", type the name and choose its data type. Enter goes to the next one.</li>'
+        . '<li><strong>Primary key:</strong> click PK in front of the attribute. Two PKs make a composite key.</li>'
+        . '<li><strong>Relationship:</strong> drag a round connector on the side of the "one" entity onto the "many" entity (or click the connector, then the entity). The foreign key is added for you; rename it if needed.</li>'
+        . '<li><strong>One or many:</strong> click an end of the line. Bar = one, crow\'s foot = many.</li>'
+        . '<li><strong>Remove a relationship:</strong> the × in the middle of its line.</li>'
+        . '<li><strong>Colour:</strong> click the dot in the entity\'s bar. Colours are not checked.</li>'
+        . '<li><strong>Move:</strong> drag an entity by its coloured bar.</li>'
+        . '</ul>'
+        . '<h2>Data types</h2><div class="erd-types">'
+        . '<div><code>INT</code> whole number, numeric key</div>'
+        . '<div><code>DECIMAL</code> number with decimals, money</div>'
+        . '<div><code>VARCHAR</code> short text</div>'
+        . '<div><code>TEXT</code> long text</div>'
+        . '<div><code>DATE</code> a day</div>'
+        . '<div><code>DATETIME</code> a day and a time</div>'
+        . '<div><code>BOOLEAN</code> yes or no</div>'
+        . '</div></div>';
 }
 
 // ---------------------------------------------------------------------------

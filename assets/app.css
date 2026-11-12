@@ -51,6 +51,10 @@ main h3 { font-size:15px; margin:18px 0 6px; }
 .card p { margin:0; color:var(--muted); font-size:13px; }
 .card .meta { font-size:12px; color:var(--accent); margin-top:auto; padding-top:6px; }
 .card.playground { border-style:dashed; }
+.chapter { margin-top:26px; scroll-margin-top:12px; }
+.chapter > h2 { margin:0 0 2px; }
+.chapter > h2 .num { display:block; font-size:12px; font-weight:400; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; }
+.chapter > .lead { margin-bottom:0; }
 
 .theory { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 24px 20px; line-height:1.6; }
 .theory h3 { font-size:15px; margin:24px 0 8px; padding-left:10px; border-left:3px solid var(--accent); }
@@ -131,6 +135,81 @@ td.null { color:var(--muted); font-style:italic; }
 .erd-wrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; }
 .erd-wrap svg { display:block; }
 .erd-wrap.fit svg { width:100%; height:auto; }
+/* <erd> inside a lesson (lessonHtml): never wider than the text, scaled down when needed. */
+.erd-inline { margin:12px 0; }
+.erd-inline svg { max-width:100%; height:auto; margin:0 auto; }
+/* Design exercise: the diagram editor (assets/erd-editor.js) and its help in the sidebar. */
+aside .erd-help { margin:0 6px; font-size:12.5px; line-height:1.45; }
+aside .erd-help p { margin:6px 0; }
+aside .erd-help ul { list-style:disc; padding-left:16px; }
+aside .erd-help li { font-family:inherit; font-size:inherit; white-space:normal; margin:4px 0; }
+aside .erd-help h2 { margin:14px 0 4px; }
+aside .erd-types div { display:flex; gap:6px; align-items:baseline; margin:3px 0; }
+aside .erd-types code { flex:none; width:68px; font-size:11px; }
+.erdform textarea { min-height:150px; }
+.erdform.visual textarea { display:none; }
+.erdform.visual.show-text textarea { display:block; margin-top:8px; }
+.erd-editor { border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+.erd-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px; border-bottom:1px solid var(--line); background:#fff; }
+.erd-chip { display:inline-flex; align-items:center; padding:6px 14px; border:1.5px dashed var(--accent); border-radius:6px; background:#eef2ff; color:var(--accent); font-size:13px; font-weight:600; cursor:grab; user-select:none; }
+.erd-chip:hover, .erd-chip:focus-visible { background:#dbe4ff; outline:none; }
+button.erd-tool { padding:5px 12px; font-size:13px; }
+.erd-status { flex:1; min-width:200px; }
+.erd-canvas { position:relative; height:480px; min-height:220px; overflow:auto; resize:vertical; background:#f8fafc radial-gradient(#d3d9e2 1px, transparent 1px) 0 0 / 20px 20px; }
+.erd-canvas.picking { cursor:crosshair; }
+.erd-surface { position:relative; min-width:100%; min-height:100%; }
+.erd-empty { position:absolute; left:0; right:0; top:42%; margin:0; text-align:center; color:var(--muted); font-size:14px; pointer-events:none; }
+.erd-lines { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
+.erd-lines path, .erd-lines line { stroke:#64748b; stroke-width:1.5; fill:none; stroke-linecap:round; }
+.erd-lines path.temp { stroke:#6d28d9; stroke-width:2; stroke-dasharray:6 4; }
+/* A relationship: wide invisible stroke to hover, round click areas on the ends (one / many), × in the middle. */
+.erd-lines .rel path.hit { stroke:transparent; stroke-width:14; pointer-events:stroke; }
+.erd-lines .rel:hover path:not(.hit), .erd-lines .rel:hover line { stroke:#1d4ed8; }
+.erd-lines .end-hit { fill:#6d28d9; fill-opacity:.08; stroke:#6d28d9; stroke-opacity:.35; stroke-width:1; stroke-dasharray:2 3; pointer-events:all; cursor:pointer; }
+.erd-lines .end-hit:hover { fill-opacity:.25; stroke-opacity:1; }
+.erd-lines .rel-del { pointer-events:all; cursor:pointer; opacity:0; transition:opacity .12s; }
+.erd-lines .rel:hover .rel-del, .erd-lines .rel-del:hover { opacity:1; }
+.erd-lines .rel-del circle { fill:#fff; stroke:#b91c1c; stroke-width:1.2; }
+.erd-lines .rel-del path { stroke:#b91c1c; stroke-width:1.6; }
+@media (hover:none) { .erd-lines .rel-del { opacity:1; } }
+.ent { position:absolute; width:264px; background:#fff; border:1px solid #c9cfd6; border-radius:6px; box-shadow:0 1px 3px rgba(15,23,42,.08); }
+.ent.moving { box-shadow:0 8px 22px rgba(15,23,42,.22); z-index:2; }
+.ent.target, .erd-canvas.picking .ent:hover { outline:2px solid #6d28d9; outline-offset:2px; }
+.erd-canvas.picking .ent, .erd-canvas.picking .ent * { cursor:pointer; }
+.ent-head { display:flex; align-items:center; gap:5px; height:34px; box-sizing:border-box; padding:0 12px 0 12px; background:var(--accent); border-radius:5px 5px 0 0; cursor:move; touch-action:none; }
+.ent-head .ent-name { flex:1; min-width:0; border:0; border-radius:4px; padding:3px 5px; background:transparent; color:#fff; font:600 13px system-ui, -apple-system, "Segoe UI", sans-serif; cursor:text; }
+.ent-head .ent-name::placeholder { color:rgba(255,255,255,.6); }
+.ent-head .ent-name:hover { background:rgba(255,255,255,.14); }
+.ent-head .ent-name:focus { background:rgba(255,255,255,.24); outline:none; }
+.ent-row { display:flex; align-items:center; gap:3px; height:29px; box-sizing:border-box; padding:0 3px 0 5px; border-bottom:1px solid #eceff3; }
+.ent-row.is-fk { background:#faf8ff; }
+.ent-row .attr { flex:1; min-width:0; border:1px solid transparent; border-radius:4px; padding:3px 5px; font:12px ui-monospace, Menlo, Consolas, monospace; color:var(--text); background:transparent; }
+.ent-row .attr:hover { border-color:var(--line); }
+.ent-row .attr:focus { border-color:var(--accent); outline:none; background:#fff; }
+.ent-row select.type { flex:none; width:84px; height:21px; padding:0 2px; border:1px solid var(--line); border-radius:4px; background:#fff; color:#475569; font:10.5px ui-monospace, Menlo, Consolas, monospace; cursor:pointer; }
+.ent-row select.type.none { color:#b45309; border-color:#fcd34d; background:#fffbeb; }
+.ent-row select.type:focus { border-color:var(--accent); outline:none; }
+.ent-row .fk-tag { flex:none; font-size:9px; font-weight:700; color:#6d28d9; padding:0 1px; cursor:default; }
+.ent button { font-family:inherit; line-height:1; }
+.ent button:hover { filter:none; }
+.ent button.pk { flex:none; width:26px; height:20px; padding:0; border:1px solid var(--line); border-radius:4px; background:#fff; color:#b3bac5; font-size:9px; font-weight:700; }
+.ent button.pk:hover { border-color:var(--accent); color:var(--accent); }
+.ent button.pk.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+.ent button.x { flex:none; width:20px; height:20px; padding:0; border:0; border-radius:4px; background:none; color:#a3aab5; font-size:15px; }
+.ent button.x:hover { background:#fee2e2; color:var(--err); }
+.ent-head button.x { color:rgba(255,255,255,.75); }
+.ent-head button.x:hover { background:rgba(255,255,255,.25); color:#fff; }
+/* Colour dot: click for the next colour. */
+.ent-head button.color { flex:none; width:16px; height:16px; padding:0; border:2px solid rgba(255,255,255,.85); border-radius:50%; background:conic-gradient(#1d4ed8, #15803d, #c2410c, #7e22ce, #b91c1c, #0f766e, #1d4ed8); cursor:pointer; }
+.ent-head button.color:hover { transform:scale(1.2); }
+/* Connectors on both sides of the name bar: drag one onto another entity for a relationship. */
+.ent button.port { position:absolute; top:9px; width:16px; height:16px; padding:0; border:2px solid #fff; border-radius:50%; background:#6d28d9; box-shadow:0 0 0 1px #6d28d9; cursor:crosshair; touch-action:none; z-index:1; }
+.ent button.port.left { left:-9px; }
+.ent button.port.right { right:-9px; }
+.ent button.port:hover { transform:scale(1.35); background:#8b5cf6; }
+.ent button.ent-add { display:block; width:100%; height:29px; padding:0 10px; border:0; border-radius:0 0 5px 5px; background:none; color:var(--accent); font-size:12px; text-align:left; }
+.ent button.ent-add:hover { background:#eef2ff; }
+.erd-error { margin:12px 0; padding:8px 12px; border:1px solid #fecaca; border-radius:8px; background:var(--errbg); color:var(--err); font-size:13px; }
 .lead em.tag { font-style:normal; font-size:10px; font-weight:700; color:var(--accent); }
 .lead em.tag.fk { color:#6d28d9; }
 svg.legend { vertical-align:middle; }

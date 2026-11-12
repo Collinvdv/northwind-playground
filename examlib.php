@@ -1,6 +1,7 @@
 <?php
 /**
- * Shared code of the graded exam (exam-groupby.php) and its teacher page
+ * Shared code of the graded exams (exampage.php, behind exam-groupby.php and
+ * exam-innerjoin.php) and their teacher page
  * (exam-admin.php). Require after lib.php.
  *
  * MySQL is read-only, so submissions are JSON files in exam-data/ (blocked
@@ -49,6 +50,7 @@ function loadExamSet(string $slug): array
     $exam['slug'] = basename($slug);
     foreach ($exam['exercises'] as $i => &$ex) {
         $ex['number'] = $i + 1;
+        $ex['type'] = $ex['type'] ?? 'sql';     // 'erd': a design assignment (checkErdExercise)
         $ex['ordered'] = $ex['ordered'] ?? false;
         $ex['columns'] = $ex['columns'] ?? false;
         $ex['points'] = $ex['points'] ?? EXAM_DEFAULT_POINTS;
@@ -422,7 +424,7 @@ function examFinalize(string $set, string $id, array $exam, PDO $pdo): array
         $a = $record['answers'][$ex['number']] ?? [];
         $sql = (string) ($a['sql'] ?? '');
         if (trim($sql) !== '' && ($a['checkedSql'] ?? null) !== $sql) {
-            $checks[$ex['number']] = [$sql, checkExercise($pdo, $ex, $sql)];
+            $checks[$ex['number']] = [$sql, checkAnswer($pdo, $ex, $sql)];
         }
     }
     return examUpdate($set, $id, function (array $d) use ($checks) {

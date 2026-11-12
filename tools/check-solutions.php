@@ -22,17 +22,27 @@ require dirname(__DIR__) . '/examlib.php';
 
 $pdo = connect($config);
 rememberConnectionId($pdo);
+$schema = loadSchema($pdo, $config['DB_NAME']);
 
 $failures = 0;
 $count = 0;
-// The exams in exam-sets/ go through the same checks as the chapters.
-$sets = loadChapters();
+// The exams in exam-sets/ go through the same checks as the lessons.
+$sets = array_map(fn($l) => ['number' => $l['label']] + $l, loadLessons());
 foreach (glob(dirname(__DIR__) . '/exam-sets/*.php') ?: [] as $file) {
-    $sets[] = loadExamSet(basename($file, '.php')) + ['number' => 'E', 'examples' => []];
+    $sets[] = loadExamSet(basename($file, '.php')) + ['number' => 'E', 'examples' => [], 'runnable' => true];
 }
 foreach ($sets as $chapter) {
-    echo ($chapter['number'] === 'E' ? '' : "Chapter {$chapter['number']}: "), $chapter['title'], "\n";
-    foreach ($chapter['examples'] as $i => $example) {
+    echo ($chapter['number'] === 'E' ? '' : "Lesson {$chapter['number']}: "), $chapter['title'], "\n";
+    // <erd> diagrams in the theory, notes and tasks must be readable.
+    $html = ($chapter['intro'] ?? '') . implode('', array_column($chapter['examples'], 'note')) . implode('', array_column($chapter['exercises'], 'task'));
+    if (preg_match_all('/<div class="erd-error">(.*?)<\/div>/s', lessonHtml($html, $schema), $bad)) {
+        foreach ($bad[1] as $message) {
+            $failures++;
+            echo "  FAIL ", html_entity_decode($message), "\n";
+        }
+    }
+    // Examples of a lesson with 'runnable' => false change data: shown, never run.
+    foreach ($chapter['runnable'] ? $chapter['examples'] : [] as $i => $example) {
         try {
             $r = runStatement($pdo, rtrim(trim($example['sql']), ';'), CHECK_MAX_ROWS);
             printf("  example %d %-45s rows=%d%s\n", $i + 1, mb_strimwidth($example['title'], 0, 45, '…'), count($r['rows']), $r['truncated'] ? ' TRUNCATED' : '');
@@ -45,6 +55,17 @@ foreach ($sets as $chapter) {
         $count++;
         $label = sprintf("  %s.%-2d %-45s", $chapter['number'], $ex['number'], mb_strimwidth($ex['title'], 0, 45, '…'));
         $problems = [];
+        if (($ex['type'] ?? 'sql') === 'erd') {
+            // A design exercise: the model design must be readable and accepted by its own check.
+            $check = checkErdExercise($ex, $ex['solution']);
+            if ($check['status'] !== 'correct') {
+                $failures++;
+                echo $label, " FAIL model design: ", $check['message'], "\n";
+            } else {
+                echo $label, " design, tables=", count($check['design']['tables']), "\n";
+            }
+            continue;
+        }
         try {
             $r = runStatement($pdo, $ex['solution'], CHECK_MAX_ROWS);
             if (count($r['rows']) === 0) {

@@ -1,7 +1,9 @@
 /*
  * Favourite exercises: a star on the exercise page and in the chapter's list
  * of exercises. Favourites live in this browser only (localStorage), as
- * [{id: "3.2", title: "3.2 Customers per country"}]. The home page lists
+ * [{id: "3.2", title: "1.3.2 Customers per country"}]: the id is lesson number
+ * (through the whole course) + exercise number, the title starts with the
+ * number shown on the pages (chapter.lesson.exercise). The home page lists
  * them (#favourites); the sidebar grid marks them with a small star.
  *
  *   <button class="fav-toggle" data-fav="3.2" data-fav-title="3.2 …" hidden>   star
@@ -32,7 +34,7 @@
     return 'exercise.php?c=' + encodeURIComponent(p[0]) + '&e=' + encodeURIComponent(p[1]);
   }
 
-  // Chapter, then exercise number: 2.10 after 2.9.
+  // Lesson, then exercise number: 2.10 after 2.9.
   function byNumber(a, b) {
     var x = a.id.split('.').map(Number), y = b.id.split('.').map(Number);
     return x[0] - y[0] || x[1] - y[1];
@@ -73,10 +75,13 @@
     section.hidden = favs.length === 0;
   }
 
-  // Keep a stored title up to date when the exercise was renamed.
+  // Keep a stored title up to date when the exercise was renamed or renumbered.
+  // The home page knows every title (window.NW_FAV_TITLES), other pages their own stars.
+  var titles = window.NW_FAV_TITLES || {};
   document.querySelectorAll('button.fav-toggle').forEach(function (btn) {
-    favs.forEach(function (f) { if (f.id === btn.dataset.fav) f.title = btn.dataset.favTitle; });
+    titles[btn.dataset.fav] = btn.dataset.favTitle;
   });
+  favs.forEach(function (f) { if (titles[f.id]) f.title = titles[f.id]; });
 
   document.addEventListener('click', function (e) {
     var btn = e.target.closest && e.target.closest('button.fav-toggle');

@@ -1,5 +1,5 @@
 /*
- * Extras for the graded exam (exam-groupby.php), on top of app.js:
+ * Extras for a graded exam (exampage.php), on top of app.js:
  *
  * - Autosave: every 15 seconds the editor text is sent when it changed (no
  *   MySQL, only the student's file), and once more when the student leaves
