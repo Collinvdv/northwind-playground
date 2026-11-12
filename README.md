@@ -399,3 +399,4 @@ If it still happens:
 - Views with spaces in their name need backticks: `` SELECT * FROM `Order Subtotals`; ``
 - Stored procedures cannot be called (the user has no `EXECUTE` right).
 # database-portal
+# database-portal
