@@ -1612,6 +1612,7 @@ function renderErdHelp(): string
         . '<li><strong>Order:</strong> drag an attribute by the grip in front of it.</li>'
         . '<li><strong>Size:</strong> drag the bottom right corner of an entity.</li>'
         . '<li><strong>Move, colour:</strong> drag the coloured bar; click the dot in it.</li>'
+        . '<li><strong>Data:</strong> shows every entity as a small table. Fill in a few example rows to see whether your design works with real data; Diagram goes back. The rows stay in this browser and are not part of your answer.</li>'
         . '<li><strong>Export / Import:</strong> save the drawing as a file and open it again. PNG saves a picture.</li>'
         . '<li><strong>Move around:</strong> drag the background, or use the arrow keys. Zoom with − / +, the + and − keys or Ctrl + scroll. Fit shows everything.</li>'
         . '<li><strong>Undo:</strong> Ctrl+Z, redo Ctrl+Y.</li>'

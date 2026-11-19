@@ -93,6 +93,15 @@
   var lastTyping = 0;   // time of the last change made by typing: a word is one step, not one per letter
   var picking = null;   // {entity, attr} after a click on a +: the next attribute clicked is the other side
 
+  // Data mode ("Data" in the toolbar): every entity as a small table with example rows, to see whether the
+  // design holds real data. The rows are never part of the design text; they are kept in this browser only,
+  // per page: {entity name (norm): [{attribute name (norm): value}]}.
+  var dataMode = false;
+  var DATA_ROWS = 3;    // empty rows of an entity that has no data yet
+  var dataKey = 'nw.erd.data.' + (freeKey || location.pathname + location.search);
+  var sample = {};
+  try { sample = JSON.parse(localStorage.getItem(dataKey) || '{}') || {}; } catch (err) { sample = {}; }
+
   // -------------------------------------------------------------------------
   // Text <-> model
   // -------------------------------------------------------------------------
@@ -297,6 +306,7 @@
   chip.title = 'Drag onto the canvas, or click, for a new entity';
   var tidyButton = button('secondary erd-tool', 'Tidy up', 'Put the entities in neat columns');
   var textButton = button('secondary erd-tool', 'Text', 'Show the design as text');
+  var dataButton = button('secondary erd-tool', 'Data', 'Switch between the diagram and example data: every entity as a small table you can fill in');
   var status = el('span', 'hint erd-status');
   var undoButton = button('secondary erd-tool', '↶', 'Undo (Ctrl+Z / ⌘+Z)');
   var redoButton = button('secondary erd-tool', '↷', 'Redo (Ctrl+Y / ⇧⌘+Z)');
@@ -312,7 +322,7 @@
   };
   var legendButton = button('secondary erd-tool', 'Legend', 'Show or hide the legend');
   var mapButton = button('secondary erd-tool', 'Overview', 'Show or hide the small map of the whole drawing');
-  toolbar.append(chip, group(undoButton, redoButton), group(zoomOut, zoomLabel, zoomIn, fitButton), fullButton, group(legendButton, mapButton), tidyButton, textButton);
+  toolbar.append(chip, dataButton, group(undoButton, redoButton), group(zoomOut, zoomLabel, zoomIn, fitButton), fullButton, group(legendButton, mapButton), tidyButton, textButton);
 
   if (!isExam) {
     var exportButton = button('secondary erd-tool', 'Export', 'Download the drawing as a file');
@@ -433,6 +443,7 @@
     Array.prototype.slice.call(surface.querySelectorAll('.ent')).forEach(function (n) { n.remove(); });
     empty.hidden = entities.length > 0;
     entities.forEach(function (e) {
+      if (dataMode) { surface.appendChild(dataBox(e)); return; }
       var box = el('div', 'ent');
       box.dataset.id = e.id;
       box.style.left = e.x + 'px';
@@ -490,17 +501,115 @@
       surface.appendChild(box);
     });
     draw();
+    if (dataMode) say(DATA_HELP);
+  }
+
+  // ---- data mode ---------------------------------------------------------------
+
+  var DATA_HELP = 'Example data: fill in a few rows per entity to see whether your design holds real data · Enter: next row · Diagram: back to the drawing';
+  var EXAMPLES = { int: '1', decimal: '9.95', varchar: 'text', text: 'long text', date: '2026-01-31', datetime: '2026-01-31 14:00', boolean: '0 / 1', blob: 'file.jpg' };
+
+  /** The example rows of an entity (a few empty ones when it has none yet). */
+  function rowsOf(e) {
+    var key = norm(label(e), true);
+    if (!sample[key] || !sample[key].length) {
+      sample[key] = [];
+      for (var i = 0; i < DATA_ROWS; i++) sample[key].push({});
+    }
+    return sample[key];
+  }
+  function cell(row, a) { var v = row[norm(a.name)]; return v === undefined || v === null ? '' : String(v).trim(); }
+  function saveSample() {
+    try { localStorage.setItem(dataKey, JSON.stringify(sample)); } catch (err) { /* private window: lasts until the page closes */ }
+  }
+
+  /** An entity as a small table: the attributes are the columns, every example row a row of cells. */
+  function dataBox(e) {
+    var box = el('div', 'ent data');
+    box.dataset.id = e.id;
+    box.style.left = e.x + 'px';
+    box.style.top = e.y + 'px';
+    box.style.minWidth = e.w + 'px';
+    if (selected[e.id]) box.classList.add('selected');
+    var head = el('div', 'ent-head');
+    head.style.backgroundColor = COLORS[e.color];
+    head.appendChild(el('span', 'ent-name', label(e)));
+    box.appendChild(head);
+    if (!e.attrs.length) {
+      box.appendChild(el('p', 'ent-nodata', 'No attributes yet: add them in the diagram.'));
+      return box;
+    }
+    var table = el('table', 'ent-data');
+    var tr = el('tr');
+    e.attrs.forEach(function (a) {
+      var th = el('th', a.pk ? 'is-pk' : a.fk ? 'is-fk' : '');
+      if (a.pk) th.appendChild(el('span', 'tag pk', 'PK'));
+      if (a.fk) th.appendChild(el('span', 'tag fk', 'FK'));
+      th.appendChild(el('span', 'col', a.name || '?'));
+      var t = target(a);
+      th.title = (a.name || 'attribute') + (a.type ? ' ' + a.type.toUpperCase() : '') + (a.pk ? ', primary key' : '')
+        + (t ? ', foreign key to ' + label(t) + (a.refAttr ? '.' + a.refAttr.name : '') : a.fk ? ', foreign key (not linked)' : '');
+      tr.appendChild(th);
+    });
+    tr.appendChild(el('th', 'act'));
+    var thead = el('thead');
+    thead.appendChild(tr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    rowsOf(e).forEach(function (row, ri) {
+      var r = el('tr');
+      e.attrs.forEach(function (a, ai) {
+        var td = el('td');
+        var input = el('input', 'cell' + (a.type === 'text' || a.type === 'datetime' ? ' wide' : ''));
+        input.value = cell(row, a);
+        input.placeholder = EXAMPLES[a.type] || '';
+        input.spellcheck = false;
+        input.dataset.row = ri;
+        input.dataset.attr = ai;
+        input.setAttribute('aria-label', label(e) + ' row ' + (ri + 1) + ', ' + (a.name || 'attribute'));
+        td.appendChild(input);
+        r.appendChild(td);
+      });
+      var act = el('td', 'act');
+      act.appendChild(button('row-del', '×', 'Remove this row'));
+      r.appendChild(act);
+      tbody.appendChild(r);
+    });
+    table.appendChild(tbody);
+    box.appendChild(table);
+    box.appendChild(button('row-add', '+ row', 'Add an example row'));
+    return box;
+  }
+
+  function addDataRow(e) {
+    rowsOf(e).push({});
+    saveSample();
+    render();
+  }
+
+  function setDataMode(on) {
+    dataMode = on;
+    stopPicking();
+    root.classList.toggle('data-mode', on);
+    dataButton.classList.toggle('on', on);
+    dataButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+    dataButton.textContent = on ? 'Diagram' : 'Data';
+    render();
+    if (!on) say();
   }
 
   // ---- lines ---------------------------------------------------------------
 
   /** Where a relationship leaves both boxes: [da, db] = +1 right side, -1 left side. */
   function sides(a, b) {
-    if (a.x + a.w / 2 < b.x) return [1, -1];
-    if (a.x > b.x + b.w / 2) return [-1, 1];
+    if (a.x + boxW(a) / 2 < b.x) return [1, -1];
+    if (a.x > b.x + boxW(b) / 2) return [-1, 1];
     return [1, 1];                    // above each other, or the entity itself: loop on the right
   }
-  function rowY(e, index) { return e.y + (index < 0 ? HEAD_H / 2 : HEAD_H + index * ROW_H + ROW_H / 2); }
+  // Data mode: a box is as big as its table, and every line runs from name bar to name bar.
+  function boxW(e) { var n = dataMode && entityNode(e); return n ? n.offsetWidth : e.w; }
+  function boxH(e) { var n = dataMode && entityNode(e); return n ? n.offsetHeight : height(e); }
+  function rowY(e, index) { return e.y + (index < 0 || dataMode ? HEAD_H / 2 : HEAD_H + index * ROW_H + ROW_H / 2); }
 
   function crowFoot(g, x1, y, ax) { [-7, 0, 7].forEach(function (dy) { svgEl('line', { x1: x1, y1: y, x2: ax, y2: y + dy }, g); }); }
   function oneBar(g, x2, y, bx, d) {
@@ -554,8 +663,8 @@
         if (!t) return;
         var s = sides(e, t);
         list.push({
-          ax: e.x + (s[0] > 0 ? e.w : 0), ay: rowY(e, i), da: s[0], aMany: !a.unique,
-          bx: t.x + (s[1] > 0 ? t.w : 0), by: rowY(t, t.attrs.indexOf(a.refAttr)), db: s[1], bMany: false,
+          ax: e.x + (s[0] > 0 ? boxW(e) : 0), ay: rowY(e, i), da: s[0], aMany: !a.unique,
+          bx: t.x + (s[1] > 0 ? boxW(t) : 0), by: rowY(t, t.attrs.indexOf(a.refAttr)), db: s[1], bMany: false,
           data: { kind: 'fk', entity: e.id, index: i },
           title: { a: label(e) + ' per ' + label(t), b: label(t) + ' per ' + label(e) }
         });
@@ -568,8 +677,8 @@
       if (!a || !b) return;
       var s = sides(a, b);
       list.push({
-        ax: a.x + (s[0] > 0 ? a.w : 0), ay: rowY(a, -1), da: s[0], aMany: true,
-        bx: b.x + (s[1] > 0 ? b.w : 0), by: rowY(b, -1), db: s[1], bMany: true,
+        ax: a.x + (s[0] > 0 ? boxW(a) : 0), ay: rowY(a, -1), da: s[0], aMany: true,
+        bx: b.x + (s[1] > 0 ? boxW(b) : 0), by: rowY(b, -1), db: s[1], bMany: true,
         data: { kind: 'mm', index: i },
         title: { a: label(a) + ' per ' + label(b), b: label(b) + ' per ' + label(a) }
       });
@@ -623,7 +732,7 @@
     entities.forEach(function (e) {
       svgEl('rect', {
         x: e.x * scale + mapScale.ox, y: e.y * scale + mapScale.oy,
-        width: Math.max(2, e.w * scale), height: Math.max(2, height(e) * scale),
+        width: Math.max(2, boxW(e) * scale), height: Math.max(2, boxH(e) * scale),
         fill: COLORS[e.color], 'class': selected[e.id] ? 'sel' : ''
       }, mapSvg);
     });
@@ -685,8 +794,8 @@
     entities.forEach(function (e) {
       b.x1 = Math.min(b.x1, e.x);
       b.y1 = Math.min(b.y1, e.y);
-      b.x2 = Math.max(b.x2, e.x + e.w);
-      b.y2 = Math.max(b.y2, e.y + height(e));
+      b.x2 = Math.max(b.x2, e.x + boxW(e));
+      b.y2 = Math.max(b.y2, e.y + boxH(e));
     });
     b.x1 -= 30; b.y1 -= 20; b.x2 += 90; b.y2 += 20;
     return b;
@@ -812,6 +921,7 @@
   }
 
   function addEntity(x, y) {
+    if (dataMode) setDataMode(false);       // a new entity is drawn in the diagram
     var n = entities.length + 1;
     var name;
     do { name = 'Entity' + n++; } while (entities.some(function (e) { return e.name === name; }));
@@ -1033,6 +1143,13 @@
     if (ev.target.tagName !== 'INPUT') return;
     var hit = fromEvent(ev);
     if (!hit || !hit.entity) return;
+    if (ev.target.classList.contains('cell')) {
+      // Data mode: an example value. Not part of the design, so no history step.
+      var a = hit.entity.attrs[+ev.target.dataset.attr];
+      var row = rowsOf(hit.entity)[+ev.target.dataset.row];
+      if (a && row) { row[norm(a.name)] = ev.target.value; saveSample(); }
+      return;
+    }
     var clean = cleanName(ev.target.value);
     if (clean !== ev.target.value) ev.target.value = clean;   // letters, digits and _ only
     if (ev.target.classList.contains('ent-name')) hit.entity.name = clean;
@@ -1056,6 +1173,15 @@
     var hit = fromEvent(ev);
     if (!hit || !hit.entity) return;
     ev.preventDefault();
+    if (ev.target.classList.contains('cell')) {
+      // Data mode: the same column one row down (a new row after the last).
+      var ri = +ev.target.dataset.row + 1;
+      var ai = ev.target.dataset.attr;
+      if (ri >= rowsOf(hit.entity).length) addDataRow(hit.entity);
+      var next = entityNode(hit.entity).querySelector('.cell[data-row="' + ri + '"][data-attr="' + ai + '"]');
+      if (next) next.focus();
+      return;
+    }
     var inputs = hit.box.querySelectorAll('.attr');
     var index = hit.row ? +hit.row.dataset.index + 1 : 0;
     if (index < inputs.length) inputs[index].focus();
@@ -1070,6 +1196,23 @@
       stopPicking();
       if (hit && hit.attr) linkRows(p.entity, p.attr, hit.entity, hit.attr);
       else if (hit) say('Click an attribute, not the entity: a relationship joins two attributes.');
+      return;
+    }
+    if (dataMode) {
+      if (!hit || !hit.entity) return;
+      if (ev.target.closest('.row-add')) {
+        addDataRow(hit.entity);
+        var cells = entityNode(hit.entity).querySelectorAll('.cell');
+        if (cells.length) cells[cells.length - hit.entity.attrs.length].focus();
+      } else if (ev.target.closest('.row-del')) {
+        var tr = ev.target.closest('tr');
+        var input = tr && tr.querySelector('.cell');
+        if (input) {
+          rowsOf(hit.entity).splice(+input.dataset.row, 1);
+          saveSample();
+          render();
+        }
+      }
       return;
     }
     var end = ev.target.closest('.end-hit');
@@ -1202,7 +1345,13 @@
     stopPicking();
     var p = surfacePoint(ev);
     var hit = fromEvent(ev);
-    if (hit && hit.entity) {
+    if (dataMode) {
+      var de = hit && hit.entity;
+      openMenu(ev, (de ? [['Add row', function () { addDataRow(de); }]] : []).concat([
+        ['Back to the diagram', function () { setDataMode(false); }],
+        ['Show everything (Fit)', fit]
+      ]));
+    } else if (hit && hit.entity) {
       var e = hit.entity;
       openMenu(ev, [
         ['Add attribute', function () { addAttribute(e); }],
@@ -1224,6 +1373,7 @@
   }, true);
   // Double-click on the background: a new entity there.
   canvas.addEventListener('dblclick', function (ev) {
+    if (dataMode) return;
     if (ev.target !== canvas && ev.target !== surface && ev.target !== empty) return;
     var p = surfacePoint(ev);
     addEntity(p.x - 20, p.y - HEAD_H / 2);
@@ -1379,7 +1529,7 @@
     }
 
     // Undo / redo, also while a name is being typed (the drawing is one history, not one per box).
-    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && inEditor && ev.target !== textarea) {
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && inEditor && ev.target !== textarea && !ev.target.classList.contains('cell')) {
       var key = ev.key.toLowerCase();
       if (key === 'z' || key === 'y') {
         ev.preventDefault();
@@ -1426,14 +1576,14 @@
   mapButton.addEventListener('click', function () { showPanel(map, mapButton, 'map', map.hidden); });
 
   tidyButton.addEventListener('click', function () {
-    var widest = entities.reduce(function (w, e) { return Math.max(w, e.w); }, BOX_W);
+    var widest = entities.reduce(function (w, e) { return Math.max(w, boxW(e)); }, BOX_W);
     var perRow = Math.max(1, Math.floor((canvas.clientWidth / view.z - PAD) / (widest + GAP_X)));
     var tops = [];
     entities.forEach(function (e, i) {
       var c = i % perRow;
       e.x = PAD + c * (widest + GAP_X);
       e.y = tops[c] || PAD;
-      tops[c] = e.y + height(e) + GAP_Y;
+      tops[c] = e.y + boxH(e) + GAP_Y;
     });
     view.x = 0;
     view.y = 0;
@@ -1441,6 +1591,7 @@
     render();
     sync();
   });
+  dataButton.addEventListener('click', function () { setDataMode(!dataMode); });
   textButton.addEventListener('click', function () {
     var open = form.classList.toggle('show-text');
     textButton.textContent = open ? 'Hide text' : 'Text';
