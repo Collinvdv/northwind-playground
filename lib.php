@@ -1240,7 +1240,7 @@ function parseErd(string $text, bool $lenient = false): array|string
             $manyRefs[] = [$m[1], $m[2]];
             continue;
         }
-        if (!preg_match('/^\+?\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)\s*)?(?:#(\w+)\s*)?:\s*(.*)$/', $line, $m)) {
+        if (!preg_match('/^\+?\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*\d+\s*,\s*\d+)?\s*)?(?:#(\w+)\s*)?:\s*(.*)$/', $line, $m)) {
             if (($error = $fail("cannot read the line \"$line\". Write: Table: column, column, ...")) !== null) {
                 return $error;
             }
@@ -1255,7 +1255,7 @@ function parseErd(string $text, bool $lenient = false): array|string
         }
         $out['tables'][$table] = [];
         if ($x !== '') {
-            $out['positions'][$table] = [(int) $x, (int) $y];   // "Table @x,y:" as the editor writes it
+            $out['positions'][$table] = [(int) $x, (int) $y];   // "Table @x,y:" or "@x,y,w,h" as the editor writes it (the size is the editor's own)
         }
         if ($color !== '') {
             $out['colors'][$table] = strtolower($color);        // "Table #green:"
@@ -1360,6 +1360,7 @@ function erdTypeGroup(string $type): string
         in_array($t, ['char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'string'], true) => 'text',
         in_array($t, ['datetime', 'timestamp'], true) => 'datetime',
         in_array($t, ['bool', 'boolean', 'bit'], true) => 'boolean',
+        in_array($t, ['blob', 'tinyblob', 'mediumblob', 'longblob', 'binary', 'varbinary'], true) => 'blob',
         default => $t,
     };
 }
@@ -1602,14 +1603,20 @@ function renderErdPreview(string $text): string
 function renderErdHelp(): string
 {
     return '<h2>How to draw</h2><div class="erd-help"><ul>'
-        . '<li><strong>Entity:</strong> drag the Entity block onto the canvas (or click it) and type its name.</li>'
+        . '<li><strong>Entity:</strong> drag the Entity block onto the canvas (or click it), or right-click the canvas and choose "New entity here". Then type its name.</li>'
         . '<li><strong>Attribute:</strong> press "+ attribute", type the name and choose its data type. Enter goes to the next one.</li>'
-        . '<li><strong>Primary key:</strong> click PK in front of the attribute. Two PKs make a composite key.</li>'
-        . '<li><strong>Relationship:</strong> drag a round connector on the side of the "one" entity onto the "many" entity (or click the connector, then the entity). The foreign key is added for you; rename it if needed.</li>'
+        . '<li><strong>Keys:</strong> click PK for the primary key (two PKs make a composite key) and FK for a foreign key.</li>'
+        . '<li><strong>Relationship:</strong> drag the + behind a foreign key onto the key it points to in the other entity (or click the +, then that attribute). Near an entity the line snaps to it: to the row under the pointer, else the attribute with the same name, else the primary key.</li>'
         . '<li><strong>One or many:</strong> click an end of the line. Bar = one, crow\'s foot = many.</li>'
         . '<li><strong>Remove a relationship:</strong> the × in the middle of its line.</li>'
-        . '<li><strong>Colour:</strong> click the dot in the entity\'s bar. Colours are not checked.</li>'
-        . '<li><strong>Move:</strong> drag an entity by its coloured bar.</li>'
+        . '<li><strong>Order:</strong> drag an attribute by the grip in front of it.</li>'
+        . '<li><strong>Size:</strong> drag the bottom right corner of an entity.</li>'
+        . '<li><strong>Move, colour:</strong> drag the coloured bar; click the dot in it.</li>'
+        . '<li><strong>Export / Import:</strong> save the drawing as a file and open it again. PNG saves a picture.</li>'
+        . '<li><strong>Move around:</strong> drag the background, or use the arrow keys. Zoom with − / +, the + and − keys or Ctrl + scroll. Fit shows everything.</li>'
+        . '<li><strong>Undo:</strong> Ctrl+Z, redo Ctrl+Y.</li>'
+        . '<li><strong>Select:</strong> Ctrl+A selects every entity, a click on a bar one, Shift+click adds one. Drag a selected entity to move them all; Delete removes them; Esc clears.</li>'
+        . '<li><strong>Legend, Overview:</strong> the two buttons show or hide the legend and the small map in the corners of the canvas. Click in the map to go there.</li>'
         . '</ul>'
         . '<h2>Data types</h2><div class="erd-types">'
         . '<div><code>INT</code> whole number, numeric key</div>'
@@ -1619,6 +1626,7 @@ function renderErdHelp(): string
         . '<div><code>DATE</code> a day</div>'
         . '<div><code>DATETIME</code> a day and a time</div>'
         . '<div><code>BOOLEAN</code> yes or no</div>'
+        . '<div><code>BLOB</code> a file: picture, PDF</div>'
         . '</div></div>';
 }
 
@@ -1702,7 +1710,7 @@ function renderSchemaSidebar(array $schema, array $open = [], bool $exam = false
 
 /**
  * <head> + header + opening of the layout.
- * $active: 'home' | 'playground' | 'erd' | 'exam'. With $sidebar the two-column
+ * $active: 'home' | 'playground' | 'erd' | 'draw' | 'exam'. With $sidebar the two-column
  * layout is used and the given HTML goes into <aside>. 'exam' renders the
  * header without links: no way to reach the course from the exam page.
  * $bodyClass lets a page adjust the layout (erd.php: full width).
@@ -1715,6 +1723,7 @@ function pageStart(string $title, string $active, ?string $sidebar = null, bool 
         'home' => ['index.php', 'Course'],
         'playground' => ['playground.php', 'Playground'],
         'erd' => ['erd.php', 'Diagram'],
+        'draw' => ['erd-draw.php', 'Draw ERD'],
     ];
     ?>
 <!DOCTYPE html>

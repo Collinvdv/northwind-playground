@@ -18,8 +18,8 @@ the favourite of many visitors.</p>
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [

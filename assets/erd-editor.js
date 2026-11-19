@@ -1,28 +1,54 @@
 /*
  * Diagram editor of a design exercise (exercise.php and the exam page, for an
- * exercise with 'type' => 'erd'). Only a drawing: nothing here touches a database.
+ * exercise with 'type' => 'erd') and of the free canvas (erd-draw.php).
+ * Only a drawing: nothing here touches a database.
  *
- *   - Drag the "Entity" block onto the canvas (or click it) for a new entity.
- *   - Type its name, add attributes, choose a data type for each, click PK for the key.
- *   - Relationship: drag one of the round connectors on the sides of an entity
- *     onto another entity (or click the connector, then the entity). The entity
- *     you start from is the "one" side; the other one gets the foreign key.
+ *   - Drag the "Entity" block onto the canvas (or click it) for a new entity;
+ *     or right-click (or double-click) the canvas: "New entity here".
+ *     Right-click an entity for "Add attribute" and "Remove entity".
+ *     Drag its coloured bar to move it, its bottom right corner to resize it,
+ *     click the dot in the bar for another colour.
+ *   - Type its name, add attributes, choose a data type for each. PK and FK in
+ *     front of an attribute mark it as (part of) the primary key / a foreign key.
+ *     Drag the grip in front of a row to change the order of the attributes.
+ *   - Relationship, row by row: drag the + behind an attribute onto the
+ *     attribute it belongs with in another entity (or click the +, then that
+ *     attribute). Near an entity the line snaps to it (see magnet()): to the
+ *     row under the pointer, else the row with the same name, else the key. The foreign key row is the one marked FK, otherwise the one
+ *     that is not a primary key, otherwise the row you started from.
  *   - Click an end of a line to switch it between "one" and "many". Many at
  *     both ends is a many-to-many line (no foreign key); one at both ends is
  *     one-to-one. The × in the middle of a line removes the relationship.
- *   - The coloured dot in an entity's bar changes its colour; drag the bar to move.
+ *   - Export / Import: the drawing as a text file. PNG: the drawing as a picture.
+ *   - The canvas has no edges: drag its background (or use the arrow keys) to
+ *     move around, zoom with the − / + buttons, the + and − keys or
+ *     Ctrl + scroll wheel; "Fit" shows everything, "Full screen" gives the
+ *     canvas the whole window (Esc leaves).
+ *   - Undo / Redo: the buttons, Ctrl+Z and Ctrl+Y (or Shift+Ctrl+Z).
+ *   - Selecting: Ctrl+A selects every entity, a click on an entity's bar that
+ *     one, Shift+click adds or removes one. Dragging a selected entity moves
+ *     all selected ones; Delete removes them; Esc or a click on the
+ *     background clears the selection.
+ *   - "Legend" explains the marks; "Overview" is a small map of the whole
+ *     drawing in the bottom left corner (click or drag in it to go there).
  *
  * The design lives as text in the form's textarea, in the notation that
  * lib.php reads (parseErd()), one line per entity:
  *
- *     Players @320,24 #green: PlayerID int PK, Name varchar, TeamID int > Teams
+ *     Players @320,24,290,0 #green: PlayerID int PK, Name varchar, TeamID int > Teams.TeamID
  *     Students <> Courses                         (a many-to-many line)
  *
- * "@x,y" is where the entity stands, "#green" its colour, UNIQUE after a
- * foreign key means one-to-one. Every change rewrites the textarea, so Check,
- * the exam's autosave (exam.js) and a page reload all work on that text.
- * "Text" in the toolbar shows it; it can be edited there too. Without
- * JavaScript the textarea alone is the editor.
+ * "@x,y,w,h" is where the entity stands and how big it is (h = 0: as high as
+ * its rows), "#green" its colour, UNIQUE after a foreign key means one-to-one,
+ * a lone FK marks a foreign key that is not linked yet. Every change rewrites
+ * the textarea, so Check, the exam's autosave (exam.js) and a page reload all
+ * work on that text. "Text" in the toolbar shows it; it can be edited there
+ * too. Without JavaScript the textarea alone is the editor.
+ *
+ * Free drawing (erd-draw.php): the form has data-free="<localStorage key>".
+ * Then there is no Check; the text is kept in this browser under that key and
+ * the toolbar gets "Clear". On the exam page (data-store-key) there is no
+ * Export / Import.
  */
 (function () {
   var form = document.getElementById('sqlform');
@@ -30,25 +56,42 @@
   var results = document.getElementById('results');
   if (!form || !textarea) return;
 
-  var BOX_W = 264;
-  var GAP_X = 80;
+  var freeKey = form.dataset.free || '';   // free drawing: no check, kept in localStorage
+  var isExam = !!form.dataset.storeKey;    // exam page: no files in or out
+
+  var BOX_W = 290;      // width of a new entity
+  var MIN_W = 230;
+  var MAX_W = 720;
+  var GAP_X = 60;
   var GAP_Y = 30;
   var PAD = 24;
   var HEAD_H = 34;
   var ROW_H = 29;       // lib.php: ERD_EDITOR_Y_SCALE = its row height / this one
+  var FOOT_H = 30;      // the "+ attribute" row
   var SVG = 'http://www.w3.org/2000/svg';
-  var TYPES = ['int', 'decimal', 'varchar', 'text', 'date', 'datetime', 'boolean'];
+  var TYPES = ['int', 'decimal', 'varchar', 'text', 'date', 'datetime', 'boolean', 'blob'];
   var TYPE_ALIASES = { integer: 'int', smallint: 'int', tinyint: 'int', bigint: 'int', numeric: 'decimal', float: 'decimal', double: 'decimal',
-    char: 'varchar', string: 'varchar', timestamp: 'datetime', bool: 'boolean', bit: 'boolean' };
+    char: 'varchar', string: 'varchar', timestamp: 'datetime', bool: 'boolean', bit: 'boolean',
+    longblob: 'blob', mediumblob: 'blob', tinyblob: 'blob', binary: 'blob', varbinary: 'blob' };
   // As ERD_COLORS in lib.php.
   var COLORS = { blue: '#1d4ed8', green: '#15803d', orange: '#c2410c', purple: '#7e22ce', red: '#b91c1c', teal: '#0f766e', grey: '#475569' };
   var COLOR_NAMES = Object.keys(COLORS);
 
-  var entities = [];    // {id, name, x, y, color, attrs: [{name, type, pk, ref (entity id or null), unique}]}
-  var many = [];        // many-to-many lines: {a: entity id, b: entity id}
+  // {id, name, x, y, w, h, color, attrs: [attr]}
+  // attr: {name, type, pk, fk, ref (entity id or null), refAttr (the attr it points to, or null), unique}
+  var entities = [];
+  var many = [];        // many-to-many lines: {a: entity id, b: entity id, was: the foreign key it came from, or null}
   var nextId = 1;
-  var linking = null;   // {entity, side, moved, startX, startY, temp} while a connector is dragged
-  var picking = null;   // {entity} after a click on a connector: the next entity clicked is the other side
+  var drag = null;      // what the pointer is doing: {kind: 'move' | 'size' | 'order' | 'link' | 'pan', ...}
+  var view = { x: 0, y: 0, z: 1 };   // the canvas: moved by x, y pixels, zoomed by z
+  var MIN_Z = 0.25;
+  var MAX_Z = 2.5;
+  var ZOOM_STEP = 1.1;  // per button press, key press or wheel notch: 10%
+  var selected = {};    // ids of the selected entities
+  var history = [];     // the text after every change, for undo / redo
+  var at = -1;          // where in history we are
+  var lastTyping = 0;   // time of the last change made by typing: a word is one step, not one per letter
+  var picking = null;   // {entity, attr} after a click on a +: the next attribute clicked is the other side
 
   // -------------------------------------------------------------------------
   // Text <-> model
@@ -74,7 +117,10 @@
     return null;
   }
 
-  function height(e) { return HEAD_H + e.attrs.length * ROW_H + 30; }
+  function natural(e) { return HEAD_H + e.attrs.length * ROW_H + FOOT_H; }
+  function height(e) { return Math.max(natural(e), e.h || 0); }
+  function label(e) { return e.name || 'Unnamed'; }
+  function target(a) { return a.ref !== null ? byId(a.ref) : null; }
 
   function load(text) {
     var list = [];
@@ -84,23 +130,25 @@
       line = line.trim();
       var mm = /^(\w+)\s*<>\s*(\w+)$/.exec(line);
       if (mm) { manyRefs.push([mm[1], mm[2]]); return; }
-      var m = /^(\+?)\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)\s*)?(?:#(\w+)\s*)?:\s*(.*)$/.exec(line);
+      var m = /^(\+?)\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*(\d+)\s*,\s*(\d+))?\s*)?(?:#(\w+)\s*)?:\s*(.*)$/.exec(line);
       if (!m) return;
-      var color = (m[5] || '').toLowerCase();
-      var e = { id: nextId++, name: cleanName(m[2]), x: null, y: null, color: COLORS[color] ? color : 'blue', stack: !!m[1], attrs: [] };
-      if (m[3] !== undefined) { e.x = Math.max(0, +m[3]); e.y = Math.max(0, +m[4]); }
-      m[6].split(/,(?![^()]*\))/).forEach(function (column) {
+      var color = (m[7] || '').toLowerCase();
+      var e = { id: nextId++, name: cleanName(m[2]), x: null, y: null, w: BOX_W, h: 0, color: COLORS[color] ? color : 'blue', stack: !!m[1], attrs: [] };
+      if (m[3] !== undefined) { e.x = +m[3]; e.y = +m[4]; }
+      if (m[5] !== undefined) { e.w = Math.min(MAX_W, Math.max(MIN_W, +m[5])); e.h = +m[6]; }
+      m[8].split(/,(?![^()]*\))/).forEach(function (column) {
         var c = /^(\S+)\s*(.*)$/.exec(column.trim());
         if (!c) return;
         var rest = c[2];
-        var a = { name: cleanName(c[1]), type: '', pk: false, ref: null, unique: false };
+        var a = { name: cleanName(c[1]), type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false };
         var r = /-?>\s*(\w+)(?:\.(\w+))?/.exec(rest);
         if (r) {
-          refs.push([a, r[1]]);
+          refs.push([a, r[1], r[2] || '']);
           rest = rest.replace(r[0], '');
           a.unique = /\bUNIQUE\b/i.test(rest);
         }
         a.pk = /\bPK\b/i.test(rest);
+        a.fk = !!r || /\bFK\b/i.test(rest);
         a.type = cleanType(rest.replace(/\b(PK|FK|UNIQUE)\b/ig, ''));
         if (a.name) e.attrs.push(a);
       });
@@ -110,15 +158,20 @@
       for (var i = 0; i < list.length; i++) if (norm(list[i].name, true) === norm(name, true)) return list[i];
       return null;
     }
-    refs.forEach(function (pair) {
-      var target = find(pair[1]);
-      if (target) pair[0].ref = target.id; else pair[0].unique = false;
+    refs.forEach(function (ref) {
+      var a = ref[0];
+      var t = find(ref[1]);
+      if (!t) { a.unique = false; return; }
+      a.ref = t.id;
+      // The attribute it points to: the one that is named, else the first key attribute.
+      a.refAttr = t.attrs.filter(function (x) { return ref[2] !== '' && norm(x.name) === norm(ref[2]); })[0]
+        || t.attrs.filter(function (x) { return x.pk; })[0] || null;
     });
     many = [];
     manyRefs.forEach(function (pair) {
       var a = find(pair[0]);
       var b = find(pair[1]);
-      if (a && b) many.push({ a: a.id, b: b.id });
+      if (a && b) many.push({ a: a.id, b: b.id, was: null });
     });
     // Entities without a place (a starter text, a design typed as text): left to right, "+" under the previous one.
     var column = 0;
@@ -137,17 +190,20 @@
       previous = e;
     });
     entities = list;
+    selected = {};
   }
-
-  function label(e) { return e.name || 'Unnamed'; }
 
   function serialize() {
     var out = entities.map(function (e) {
       var columns = e.attrs.filter(function (a) { return a.name !== ''; }).map(function (a) {
-        var target = a.ref !== null ? byId(a.ref) : null;
-        return a.name + (a.type ? ' ' + a.type : '') + (a.pk ? ' PK' : '') + (target ? ' > ' + label(target) + (a.unique ? ' UNIQUE' : '') : '');
+        var t = target(a);
+        var link = '';
+        if (t) link = ' > ' + label(t) + (a.refAttr && a.refAttr.name ? '.' + a.refAttr.name : '') + (a.unique ? ' UNIQUE' : '');
+        else if (a.fk) link = ' FK';
+        return a.name + (a.type ? ' ' + a.type : '') + (a.pk ? ' PK' : '') + link;
       });
-      return label(e) + ' @' + Math.round(e.x) + ',' + Math.round(e.y) + (e.color !== 'blue' ? ' #' + e.color : '') + ': ' + columns.join(', ');
+      var size = e.w !== BOX_W || e.h ? ',' + Math.round(e.w) + ',' + Math.round(e.h || 0) : '';
+      return label(e) + ' @' + Math.round(e.x) + ',' + Math.round(e.y) + size + (e.color !== 'blue' ? ' #' + e.color : '') + ': ' + columns.join(', ');
     });
     many.forEach(function (m) {
       var a = byId(m.a);
@@ -158,12 +214,55 @@
   }
 
   var ownInput = false;
-  /** The model changed: rewrite the textarea and tell whoever listens (exam.js autosave). */
-  function sync() {
+  /** Put the model's text in the textarea and tell whoever listens (exam.js autosave). */
+  function publish() {
     textarea.value = serialize();
     ownInput = true;
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     ownInput = false;
+    remember();
+  }
+
+  /** The model changed: publish it and add a step to the history. typing: letters typed shortly after each other are one step. */
+  function sync(typing) {
+    publish();
+    var text = textarea.value;
+    var now = Date.now();
+    if (text !== history[at]) {
+      if (typing && at > 0 && now - lastTyping < 1200) {
+        history[at] = text;                       // still the same word
+      } else {
+        history.splice(at + 1, history.length, text);
+        if (history.length > 200) history.shift();
+        at = history.length - 1;
+      }
+    }
+    lastTyping = typing ? now : 0;
+    historyButtons();
+  }
+
+  /** Undo (-1) or redo (+1). */
+  function travel(step) {
+    if (at + step < 0 || at + step >= history.length) return;
+    at += step;
+    stopPicking();
+    load(history[at]);
+    render();
+    publish();
+    lastTyping = 0;
+    historyButtons();
+    say(step < 0 ? 'Undone.' : 'Redone.');
+  }
+
+  function historyButtons() {
+    if (!undoButton) return;
+    undoButton.disabled = at <= 0;
+    redoButton.disabled = at >= history.length - 1;
+  }
+
+  function remember() {
+    if (!freeKey) return;
+    try { localStorage.setItem(freeKey, textarea.value); } catch (e) { /* private window: lasts until the page closes */ }
   }
 
   // -------------------------------------------------------------------------
@@ -199,21 +298,133 @@
   var tidyButton = button('secondary erd-tool', 'Tidy up', 'Put the entities in neat columns');
   var textButton = button('secondary erd-tool', 'Text', 'Show the design as text');
   var status = el('span', 'hint erd-status');
-  toolbar.append(chip, tidyButton, textButton, status);
+  var undoButton = button('secondary erd-tool', '↶', 'Undo (Ctrl+Z / ⌘+Z)');
+  var redoButton = button('secondary erd-tool', '↷', 'Redo (Ctrl+Y / ⇧⌘+Z)');
+  var zoomOut = button('secondary erd-tool', '−', 'Zoom out (− key, or Ctrl + scroll)');
+  var zoomLabel = button('secondary erd-tool erd-zoom', '100%', 'Back to 100%');
+  var zoomIn = button('secondary erd-tool', '+', 'Zoom in (+ key, or Ctrl + scroll)');
+  var fitButton = button('secondary erd-tool', 'Fit', 'Show the whole drawing (0 key)');
+  var fullButton = button('secondary erd-tool', 'Full screen', 'Give the canvas the whole window (Esc leaves)');
+  var group = function () {
+    var g = el('span', 'erd-group');
+    g.append.apply(g, arguments);
+    return g;
+  };
+  var legendButton = button('secondary erd-tool', 'Legend', 'Show or hide the legend');
+  var mapButton = button('secondary erd-tool', 'Overview', 'Show or hide the small map of the whole drawing');
+  toolbar.append(chip, group(undoButton, redoButton), group(zoomOut, zoomLabel, zoomIn, fitButton), fullButton, group(legendButton, mapButton), tidyButton, textButton);
+
+  if (!isExam) {
+    var exportButton = button('secondary erd-tool', 'Export', 'Download the drawing as a file');
+    var importButton = button('secondary erd-tool', 'Import', 'Open a drawing that was exported before');
+    var pngButton = button('secondary erd-tool', 'PNG', 'Download the drawing as a picture');
+    var fileInput = el('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.txt,.erd,text/plain';
+    fileInput.hidden = true;
+    toolbar.append(group(exportButton, importButton, pngButton), fileInput);
+    pngButton.addEventListener('click', savePng);
+    exportButton.addEventListener('click', function () {
+      var url = URL.createObjectURL(new Blob([serialize() + '\n'], { type: 'text/plain' }));
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'erd.txt';
+      root.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+    importButton.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () {
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';             // the same file can be chosen again
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var before = entities.length;
+        var text = String(reader.result || '');
+        load(text);
+        if (!entities.length) {
+          load(textarea.value);         // not a drawing: keep what was there
+          render();
+          say('That file holds no drawing: it must be a file made with Export.');
+          return;
+        }
+        if (before && !window.confirm('Replace the ' + before + ' entities on the canvas by the ' + entities.length + ' of ' + file.name + '?')) {
+          load(textarea.value);
+          render();
+          return;
+        }
+        render();
+        sync();
+        say('Opened ' + file.name + ': ' + entities.length + ' entities.');
+      };
+      reader.readAsText(file);
+    });
+  }
+  if (freeKey) {
+    var clearButton = button('secondary erd-tool', 'Clear', 'Remove everything from the canvas');
+    toolbar.appendChild(clearButton);
+    clearButton.addEventListener('click', function () {
+      if (entities.length && !window.confirm('Remove all ' + entities.length + ' entities from the canvas?')) return;
+      entities = [];
+      many = [];
+      render();
+      sync();
+    });
+  }
+  toolbar.appendChild(status);
 
   var canvas = el('div', 'erd-canvas');
   var surface = el('div', 'erd-surface');
   var lines = document.createElementNS(SVG, 'svg');
   lines.setAttribute('class', 'erd-lines');
-  var empty = el('p', 'erd-empty', 'Drag the Entity block here, or click it, to start your diagram.');
-  surface.append(lines, empty);
-  canvas.appendChild(surface);
+  var empty = el('p', 'erd-empty', 'Drag the Entity block here, click it, or right-click here, to start your diagram.');
+  surface.appendChild(lines);
+  canvas.append(surface, empty);
+  // Legend (bottom right) and overview map (bottom left), both over the canvas.
+  var legend = el('div', 'erd-legend');
+  legend.innerHTML = '<strong>Legend</strong>'
+    + '<div><span class="k pk">PK</span> primary key</div>'
+    + '<div><span class="k fk">FK</span> foreign key</div>'
+    + '<div><svg width="34" height="16" viewBox="0 0 34 16"><line x1="2" y1="8" x2="32" y2="8"/><line x1="26" y1="1" x2="26" y2="15"/></svg> one</div>'
+    + '<div><svg width="34" height="16" viewBox="0 0 34 16"><line x1="2" y1="8" x2="32" y2="8"/><line x1="18" y1="8" x2="32" y2="1"/><line x1="18" y1="8" x2="32" y2="15"/></svg> many</div>'
+    + '<div><span class="k plus">+</span> drag to link two attributes</div>'
+    + '<div><span class="k grip">⋮⋮</span> drag to reorder</div>';
+  var map = el('div', 'erd-map');
+  map.title = 'Overview: click or drag to go there';
+  var mapSvg = document.createElementNS(SVG, 'svg');
+  map.appendChild(mapSvg);
+  canvas.append(legend, map);
+  var MAP_W = 190;
+  var MAP_H = 120;
+  var mapScale = null;  // {s, ox, oy}: drawing coordinate → map pixel
+
+  function preference(name, fallback) {
+    try { var v = localStorage.getItem('nw.erd.' + name); return v === null ? fallback : v === '1'; } catch (e) { return fallback; }
+  }
+  function setPreference(name, on) {
+    try { localStorage.setItem('nw.erd.' + name, on ? '1' : '0'); } catch (e) { /* not remembered */ }
+  }
+  function showPanel(node, btn, name, on) {
+    node.hidden = !on;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    setPreference(name, on);
+    if (on && node === map) drawMap();
+  }
+
+  canvas.tabIndex = 0;
+  canvas.setAttribute('aria-label', 'Drawing canvas. Arrow keys move it, + and - zoom, 0 shows everything.');
   root.append(toolbar, canvas);
   form.insertBefore(root, form.firstChild);
   form.classList.add('visual');
 
-  var IDLE = 'Drag “Entity” onto the canvas · drag a round connector to another entity for a relationship · click a line end: one ↔ many';
-  function say(text) { status.textContent = text || IDLE; }
+  var IDLE = 'Drag “Entity” onto the canvas · drag the + of an attribute onto an attribute of another entity for a relationship · click a line end: one ↔ many · drag the background to move around';
+  function say(text) {
+    status.textContent = text || IDLE;
+    status.title = status.textContent;      // the whole message when it does not fit on the line
+  }
 
   function entityNode(e) { return surface.querySelector('.ent[data-id="' + e.id + '"]'); }
 
@@ -226,6 +437,9 @@
       box.dataset.id = e.id;
       box.style.left = e.x + 'px';
       box.style.top = e.y + 'px';
+      box.style.width = e.w + 'px';
+      box.style.minHeight = height(e) + 'px';
+      if (selected[e.id]) box.classList.add('selected');
 
       var head = el('div', 'ent-head');
       head.style.backgroundColor = COLORS[e.color];
@@ -236,14 +450,19 @@
       name.setAttribute('aria-label', 'Entity name');
       head.append(name, button('color', '', 'Change the colour'), button('x', '×', 'Remove this entity'));
       box.appendChild(head);
-      box.append(button('port left', '', 'Relationship: drag onto another entity (this entity is the “one” side)'),
-                 button('port right', '', 'Relationship: drag onto another entity (this entity is the “one” side)'));
 
       e.attrs.forEach(function (a, i) {
-        var row = el('div', 'ent-row' + (a.ref !== null && byId(a.ref) ? ' is-fk' : ''));
+        var linked = !!target(a);
+        var row = el('div', 'ent-row' + (a.fk ? ' is-fk' : ''));
         row.dataset.index = i;
-        var pk = button('pk' + (a.pk ? ' on' : ''), 'PK', a.pk ? 'Primary key (click to remove)' : 'Make this the primary key');
+        var grip = el('span', 'grip', '⋮⋮');
+        grip.title = 'Drag to change the order of the attributes';
+        var pk = button('key pk' + (a.pk ? ' on' : ''), 'PK', a.pk ? 'Primary key (click to remove)' : 'Make this (part of) the primary key');
         pk.setAttribute('aria-pressed', a.pk ? 'true' : 'false');
+        var fk = button('key fk' + (a.fk ? ' on' : ''), 'FK', a.fk
+          ? (linked ? 'Foreign key (click to remove the mark and its relationship)' : 'Foreign key, not linked yet: drag its + onto the key it points to (click to remove the mark)')
+          : 'Make this a foreign key');
+        fk.setAttribute('aria-pressed', a.fk ? 'true' : 'false');
         var input = el('input', 'attr');
         input.value = a.name;
         input.placeholder = 'attribute';
@@ -258,17 +477,16 @@
           type.appendChild(option);
         });
         type.value = a.type;
-        row.append(pk, input, type);
-        if (a.ref !== null && byId(a.ref)) {
-          var fk = el('span', 'fk-tag', 'FK');
-          fk.title = 'Foreign key: follow the line';
-          row.appendChild(fk);
-        }
-        row.appendChild(button('x', '×', 'Remove this attribute'));
+        row.append(grip, pk, fk, input, type,
+          button('link', '+', 'Relationship: drag onto the attribute of another entity that this one belongs with'),
+          button('x', '×', 'Remove this attribute'));
         box.appendChild(row);
       });
 
       box.appendChild(button('ent-add', '+ attribute', 'Add an attribute'));
+      var grow = el('span', 'resize');
+      grow.title = 'Drag to make the entity bigger or smaller';
+      box.appendChild(grow);
       surface.appendChild(box);
     });
     draw();
@@ -278,10 +496,11 @@
 
   /** Where a relationship leaves both boxes: [da, db] = +1 right side, -1 left side. */
   function sides(a, b) {
-    if (a.x + BOX_W / 2 < b.x) return [1, -1];
-    if (a.x > b.x + BOX_W / 2) return [-1, 1];
+    if (a.x + a.w / 2 < b.x) return [1, -1];
+    if (a.x > b.x + b.w / 2) return [-1, 1];
     return [1, 1];                    // above each other, or the entity itself: loop on the right
   }
+  function rowY(e, index) { return e.y + (index < 0 ? HEAD_H / 2 : HEAD_H + index * ROW_H + ROW_H / 2); }
 
   function crowFoot(g, x1, y, ax) { [-7, 0, 7].forEach(function (dy) { svgEl('line', { x1: x1, y1: y, x2: ax, y2: y + dy }, g); }); }
   function oneBar(g, x2, y, bx, d) {
@@ -325,34 +544,21 @@
     svgEl('title', {}, del).textContent = 'Remove this relationship';
   }
 
-  /** Grow the surface with the entities and draw the relationship lines. */
-  function draw() {
-    var w = canvas.clientWidth;
-    var h = canvas.clientHeight;
-    entities.forEach(function (e) {
-      w = Math.max(w, e.x + BOX_W + PAD + 80);
-      h = Math.max(h, e.y + height(e) + PAD);
-    });
-    surface.style.width = w + 'px';
-    surface.style.height = h + 'px';
-    lines.setAttribute('width', w);
-    lines.setAttribute('height', h);
-    while (lines.firstChild) lines.removeChild(lines.firstChild);
-
-    // Foreign keys: from the attribute (end "a", the child) to the key of the other entity (end "b", the parent).
+  /** Every relationship as the numbers relation() needs: both ends, their sides and marks. */
+  function relations() {
+    var list = [];
+    // Foreign keys: from the foreign key row (end "a", the child) to the row it points to (end "b", the parent).
     entities.forEach(function (e) {
       e.attrs.forEach(function (a, i) {
-        var target = a.ref !== null ? byId(a.ref) : null;
-        if (!target) return;
-        var keyRow = -1;
-        target.attrs.some(function (t, j) { if (t.pk) { keyRow = j; return true; } return false; });
-        var s = sides(e, target);
-        relation(
-          e.x + (s[0] > 0 ? BOX_W : 0), e.y + HEAD_H + i * ROW_H + ROW_H / 2, s[0], !a.unique,
-          target.x + (s[1] > 0 ? BOX_W : 0), target.y + (keyRow < 0 ? HEAD_H / 2 : HEAD_H + keyRow * ROW_H + ROW_H / 2), s[1], false,
-          { kind: 'fk', entity: e.id, index: i },
-          { a: label(e) + ' per ' + label(target), b: label(target) + ' per ' + label(e) }
-        );
+        var t = target(a);
+        if (!t) return;
+        var s = sides(e, t);
+        list.push({
+          ax: e.x + (s[0] > 0 ? e.w : 0), ay: rowY(e, i), da: s[0], aMany: !a.unique,
+          bx: t.x + (s[1] > 0 ? t.w : 0), by: rowY(t, t.attrs.indexOf(a.refAttr)), db: s[1], bMany: false,
+          data: { kind: 'fk', entity: e.id, index: i },
+          title: { a: label(e) + ' per ' + label(t), b: label(t) + ' per ' + label(e) }
+        });
       });
     });
     // Many-to-many lines: name bar to name bar.
@@ -361,13 +567,227 @@
       var b = byId(m.b);
       if (!a || !b) return;
       var s = sides(a, b);
-      relation(
-        a.x + (s[0] > 0 ? BOX_W : 0), a.y + HEAD_H / 2, s[0], true,
-        b.x + (s[1] > 0 ? BOX_W : 0), b.y + HEAD_H / 2, s[1], true,
-        { kind: 'mm', index: i },
-        { a: label(a) + ' per ' + label(b), b: label(b) + ' per ' + label(a) }
-      );
+      list.push({
+        ax: a.x + (s[0] > 0 ? a.w : 0), ay: rowY(a, -1), da: s[0], aMany: true,
+        bx: b.x + (s[1] > 0 ? b.w : 0), by: rowY(b, -1), db: s[1], bMany: true,
+        data: { kind: 'mm', index: i },
+        title: { a: label(a) + ' per ' + label(b), b: label(b) + ' per ' + label(a) }
+      });
     });
+    return list;
+  }
+
+  /** Draw the relationship lines. */
+  function draw() {
+    while (lines.firstChild) lines.removeChild(lines.firstChild);
+    relations().forEach(function (r) {
+      relation(r.ax, r.ay, r.da, r.aMany, r.bx, r.by, r.db, r.bMany, r.data, r.title);
+    });
+    drawMap();
+  }
+
+  // ---- selection --------------------------------------------------------------
+
+  function selection() { return entities.filter(function (e) { return selected[e.id]; }); }
+
+  function markSelection() {
+    entities.forEach(function (e) {
+      var node = entityNode(e);
+      if (node) node.classList.toggle('selected', !!selected[e.id]);
+    });
+    drawMap();
+  }
+
+  function select(list) {
+    selected = {};
+    list.forEach(function (e) { selected[e.id] = true; });
+    markSelection();
+  }
+
+  // ---- the overview map ---------------------------------------------------------
+
+  /** Every entity as a small block, and the part of the canvas that is on screen as a frame. */
+  function drawMap() {
+    if (map.hidden) return;
+    while (mapSvg.firstChild) mapSvg.removeChild(mapSvg.firstChild);
+    var vx = -view.x / view.z;
+    var vy = -view.y / view.z;
+    var vw = canvas.clientWidth / view.z;
+    var vh = canvas.clientHeight / view.z;
+    var b = bounds() || { x1: vx, y1: vy, x2: vx + vw, y2: vy + vh };
+    var x1 = Math.min(b.x1, vx), y1 = Math.min(b.y1, vy), x2 = Math.max(b.x2, vx + vw), y2 = Math.max(b.y2, vy + vh);
+    var scale = Math.min((MAP_W - 8) / (x2 - x1), (MAP_H - 8) / (y2 - y1));
+    mapScale = { s: scale, ox: (MAP_W - (x2 - x1) * scale) / 2 - x1 * scale, oy: (MAP_H - (y2 - y1) * scale) / 2 - y1 * scale };
+    mapSvg.setAttribute('width', MAP_W);
+    mapSvg.setAttribute('height', MAP_H);
+    entities.forEach(function (e) {
+      svgEl('rect', {
+        x: e.x * scale + mapScale.ox, y: e.y * scale + mapScale.oy,
+        width: Math.max(2, e.w * scale), height: Math.max(2, height(e) * scale),
+        fill: COLORS[e.color], 'class': selected[e.id] ? 'sel' : ''
+      }, mapSvg);
+    });
+    svgEl('rect', { x: vx * scale + mapScale.ox, y: vy * scale + mapScale.oy, width: vw * scale, height: vh * scale, 'class': 'frame' }, mapSvg);
+  }
+
+  /** Put the point of the drawing under this spot of the map in the middle of the canvas. */
+  function mapGo(ev) {
+    if (!mapScale) return;
+    var r = mapSvg.getBoundingClientRect();
+    var x = (ev.clientX - r.left - mapScale.ox) / mapScale.s;
+    var y = (ev.clientY - r.top - mapScale.oy) / mapScale.s;
+    view.x = canvas.clientWidth / 2 - x * view.z;
+    view.y = canvas.clientHeight / 2 - y * view.z;
+    applyView();
+  }
+  var mapDragging = false;
+  map.addEventListener('pointerdown', function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    mapDragging = true;
+    map.setPointerCapture(ev.pointerId);
+    mapGo(ev);
+  });
+  map.addEventListener('pointermove', function (ev) { if (mapDragging) mapGo(ev); });
+  map.addEventListener('pointerup', function () { mapDragging = false; });
+  map.addEventListener('pointercancel', function () { mapDragging = false; });
+
+  // ---- the view: moving around and zooming ----------------------------------
+
+  function applyView() {
+    surface.style.transform = 'translate(' + view.x + 'px, ' + view.y + 'px) scale(' + view.z + ')';
+    canvas.style.backgroundPosition = view.x + 'px ' + view.y + 'px';
+    canvas.style.backgroundSize = (20 * view.z) + 'px ' + (20 * view.z) + 'px';
+    zoomLabel.textContent = Math.round(view.z * 100) + '%';
+    drawMap();
+  }
+
+  /** Zoom to z, keeping the point (cx, cy) of the canvas where it is (default: its middle). */
+  function zoomTo(z, cx, cy) {
+    z = Math.min(MAX_Z, Math.max(MIN_Z, z));
+    if (cx === undefined) { cx = canvas.clientWidth / 2; cy = canvas.clientHeight / 2; }
+    view.x = cx - (cx - view.x) * z / view.z;
+    view.y = cy - (cy - view.y) * z / view.z;
+    view.z = z;
+    applyView();
+  }
+
+  function pan(dx, dy) {
+    view.x += dx;
+    view.y += dy;
+    applyView();
+  }
+
+  /** The rectangle around everything that is drawn (lines that loop out on the right included). */
+  function bounds() {
+    if (!entities.length) return null;
+    var b = { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity };
+    entities.forEach(function (e) {
+      b.x1 = Math.min(b.x1, e.x);
+      b.y1 = Math.min(b.y1, e.y);
+      b.x2 = Math.max(b.x2, e.x + e.w);
+      b.y2 = Math.max(b.y2, e.y + height(e));
+    });
+    b.x1 -= 30; b.y1 -= 20; b.x2 += 90; b.y2 += 20;
+    return b;
+  }
+
+  /** Show the whole drawing, not larger than 100%. */
+  function fit() {
+    var b = bounds();
+    if (!b) { view = { x: 0, y: 0, z: 1 }; applyView(); return; }
+    var z = Math.min(1, canvas.clientWidth / (b.x2 - b.x1), canvas.clientHeight / (b.y2 - b.y1));
+    view.z = Math.max(MIN_Z, z);
+    view.x = (canvas.clientWidth - (b.x2 - b.x1) * view.z) / 2 - b.x1 * view.z;
+    view.y = Math.max(8, (canvas.clientHeight - (b.y2 - b.y1) * view.z) / 2) - b.y1 * view.z;
+    applyView();
+  }
+
+  function setFull(on) {
+    form.classList.toggle('full', on);
+    document.documentElement.classList.toggle('erd-full', on);
+    fullButton.textContent = on ? 'Exit full screen' : 'Full screen';
+    fit();
+  }
+
+  // ---- the drawing as a picture ----------------------------------------------
+
+  function esc(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /** The drawing as a stand-alone SVG text (what "PNG" turns into a picture), or null when the canvas is empty. */
+  function svgText() {
+    var b = bounds();
+    if (!b) return null;
+    var w = Math.ceil(b.x2 - b.x1);
+    var h = Math.ceil(b.y2 - b.y1);
+    var mono = 'ui-monospace, Menlo, Consolas, monospace';
+    var sans = 'system-ui, -apple-system, Segoe UI, Arial, sans-serif';
+    var out = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' + b.x1 + ' ' + b.y1 + ' ' + w + ' ' + h + '">'
+      + '<rect x="' + b.x1 + '" y="' + b.y1 + '" width="' + w + '" height="' + h + '" fill="#fff"/>'
+      + '<g stroke="#64748b" stroke-width="1.5" fill="none" stroke-linecap="round">';
+    function seg(x1, y1, x2, y2) { return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>'; }
+    function mark(isMany, x, y, edge, d) {
+      if (isMany) return seg(x, y, edge, y - 7) + seg(x, y, edge, y) + seg(x, y, edge, y + 7);
+      return seg(x, y, edge, y) + seg(edge + d * 7, y - 7, edge + d * 7, y + 7);
+    }
+    relations().forEach(function (r) {
+      var x1 = r.ax + r.da * 16;
+      var x2 = r.bx + r.db * 16;
+      var k = Math.max(50, Math.abs(x2 - x1) / 2);
+      out += '<path d="M' + x1 + ' ' + r.ay + ' C' + (x1 + r.da * k) + ' ' + r.ay + ' ' + (x2 + r.db * k) + ' ' + r.by + ' ' + x2 + ' ' + r.by + '"/>'
+        + mark(r.aMany, x1, r.ay, r.ax, r.da) + mark(r.bMany, x2, r.by, r.bx, r.db);
+    });
+    out += '</g>';
+    entities.forEach(function (e) {
+      var eh = height(e) - FOOT_H + 6;              // without the "+ attribute" row
+      out += '<g transform="translate(' + e.x + ' ' + e.y + ')">'
+        + '<rect width="' + e.w + '" height="' + eh + '" rx="6" fill="#fff" stroke="#c9cfd6"/>'
+        + '<path d="M0 6 Q0 0 6 0 H' + (e.w - 6) + ' Q' + e.w + ' 0 ' + e.w + ' 6 V' + HEAD_H + ' H0 Z" fill="' + COLORS[e.color] + '"/>'
+        + '<text x="' + (e.w / 2) + '" y="22" text-anchor="middle" fill="#fff" font-family="' + sans + '" font-size="14" font-weight="600">' + esc(label(e)) + '</text>';
+      e.attrs.forEach(function (a, i) {
+        var top = HEAD_H + i * ROW_H;
+        var base = top + 19;
+        if (i > 0) out += '<line x1="8" y1="' + top + '" x2="' + (e.w - 8) + '" y2="' + top + '" stroke="#eceff3"/>';
+        if (a.pk) out += '<text x="8" y="' + base + '" fill="#1d4ed8" font-family="' + mono + '" font-size="10" font-weight="700">PK</text>';
+        if (a.fk) out += '<text x="' + (a.pk ? 26 : 8) + '" y="' + base + '" fill="#6d28d9" font-family="' + mono + '" font-size="10" font-weight="700">FK</text>';
+        out += '<text x="46" y="' + base + '" fill="#1f2328" font-family="' + mono + '" font-size="13"' + (a.pk || a.fk ? ' font-weight="700"' : '') + '>' + esc(a.name) + '</text>'
+          + '<text x="' + (e.w - 10) + '" y="' + base + '" text-anchor="end" fill="#6b7280" font-family="' + mono + '" font-size="11">' + esc(a.type.toUpperCase()) + '</text>';
+      });
+      out += '</g>';
+    });
+    return { svg: out + '</svg>', width: w, height: h };
+  }
+
+  function savePng() {
+    var drawing = svgText();
+    if (!drawing) { say('Nothing to save yet: the canvas is empty.'); return; }
+    var img = new Image();
+    img.onload = function () {
+      var scale = 2;                                 // sharp on a projector and in a document
+      var c = document.createElement('canvas');
+      c.width = drawing.width * scale;
+      c.height = drawing.height * scale;
+      var g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(function (blob) {
+        if (!blob) { say('The picture could not be made in this browser.'); return; }
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'erd.png';
+        root.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        say('Saved erd.png (' + c.width + ' × ' + c.height + ' pixels).');
+      }, 'image/png');
+    };
+    img.onerror = function () { say('The picture could not be made in this browser.'); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(drawing.svg);
   }
 
   // -------------------------------------------------------------------------
@@ -376,23 +796,26 @@
 
   /** A free spot for an entity that was added with a click. */
   function freeSpot() {
-    var perRow = Math.max(1, Math.floor((canvas.clientWidth - PAD) / (BOX_W + GAP_X)));
+    // In the part of the canvas that is on screen now.
+    var left = Math.round(-view.x / view.z);
+    var top = Math.round(-view.y / view.z);
+    var perRow = Math.max(1, Math.floor((canvas.clientWidth / view.z - PAD) / (BOX_W + GAP_X)));
     for (var n = 0; n < 200; n++) {
-      var x = PAD + (n % perRow) * (BOX_W + GAP_X);
-      var y = PAD + Math.floor(n / perRow) * 190;
+      var x = left + PAD + (n % perRow) * (BOX_W + GAP_X);
+      var y = top + PAD + Math.floor(n / perRow) * 190;
       var taken = entities.some(function (e) {
-        return x < e.x + BOX_W + 20 && x + BOX_W + 20 > e.x && y < e.y + height(e) + 20 && y + 120 > e.y;
+        return x < e.x + e.w + 20 && x + BOX_W + 20 > e.x && y < e.y + height(e) + 20 && y + 120 > e.y;
       });
       if (!taken) return { x: x, y: y };
     }
-    return { x: PAD, y: PAD };
+    return { x: left + PAD, y: top + PAD };
   }
 
   function addEntity(x, y) {
     var n = entities.length + 1;
     var name;
     do { name = 'Entity' + n++; } while (entities.some(function (e) { return e.name === name; }));
-    var e = { id: nextId++, name: name, x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)), color: 'blue', attrs: [] };
+    var e = { id: nextId++, name: name, x: Math.round(x), y: Math.round(y), w: BOX_W, h: 0, color: 'blue', attrs: [] };
     entities.push(e);
     render();
     sync();
@@ -402,70 +825,74 @@
   }
 
   function addAttribute(e) {
-    e.attrs.push({ name: '', type: '', pk: false, ref: null, unique: false });
+    e.attrs.push({ name: '', type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false });
     render();
     sync();
     var inputs = entityNode(e).querySelectorAll('.attr');
     inputs[inputs.length - 1].focus();
   }
 
+  function unlink(a) {
+    a.ref = null;
+    a.refAttr = null;
+    a.unique = false;
+  }
+
+  /** Nothing may keep pointing to an attribute or entity that is gone. */
+  function forget(test) {
+    entities.forEach(function (o) {
+      o.attrs.forEach(function (a) { if (a.ref !== null && test(a)) unlink(a); });
+    });
+    many.forEach(function (m) { if (m.was && test(m.was.attr)) m.was = null; });
+  }
+
   /**
-   * The foreign key of a one-to-many (or one-to-one) relationship: an
-   * attribute in child that points to parent. An attribute that already has
-   * the name of the parent's key and no link yet is used; otherwise one is added.
+   * A relationship between two rows. Which one holds the foreign key: the one
+   * marked FK; otherwise the one that is not a primary key; otherwise the row
+   * the line was started from (e1, a1).
    */
-  function addForeignKey(child, parent, unique) {
-    var key = parent.attrs.filter(function (t) { return t.pk && t.name; })[0];
-    var name = key ? key.name : cleanName(label(parent)) + 'ID';
-    var type = key && key.type ? key.type : 'int';
-    var existing = child.attrs.filter(function (a) { return norm(a.name) === norm(name); })[0];
-    if (existing && existing.ref === null && child !== parent) {
-      existing.ref = parent.id;
-      existing.unique = !!unique;
-      if (!existing.type) existing.type = type;
-      return;
-    }
-    if (existing) {
-      // The name is taken: the entity itself (its own key) or a second relationship with the same entity.
-      var base = child === parent ? 'Parent' + name : name;
-      var n = child === parent ? 1 : 2;
-      name = base + (n > 1 ? n : '');
-      while (child.attrs.some(function (a) { return norm(a.name) === norm(name); })) name = base + (++n);
-    }
-    child.attrs.push({ name: name, type: type, pk: false, ref: parent.id, unique: !!unique });
-  }
-
-  /** Take a foreign key away: the attribute goes too, unless it is part of the primary key. */
-  function removeForeignKey(e, a) {
-    if (a.pk) { a.ref = null; a.unique = false; }
-    else e.attrs.splice(e.attrs.indexOf(a), 1);
-  }
-
-  /** A new relationship, drawn from one to other: one "one" has many "other". */
-  function connect(one, other) {
-    addForeignKey(other, one, false);
+  function linkRows(e1, a1, e2, a2) {
+    if (a1 === a2) return;
+    var firstIsKey;
+    if (a1.fk !== a2.fk) firstIsKey = a1.fk;
+    else if (a1.pk !== a2.pk) firstIsKey = !a1.pk;
+    else firstIsKey = true;
+    var child = firstIsKey ? e1 : e2;
+    var fk = firstIsKey ? a1 : a2;
+    var parent = firstIsKey ? e2 : e1;
+    var key = firstIsKey ? a2 : a1;
+    fk.fk = true;
+    fk.ref = parent.id;
+    fk.refAttr = key;
+    fk.unique = false;
+    if (!fk.type && key.type) fk.type = key.type;      // a foreign key has the type of the key it points to
     render();
     sync();
-    say(one === other
-      ? 'Linked ' + label(one) + ' to itself. Rename the new attribute if you like.'
-      : 'One ' + label(one) + ' has many ' + label(other) + '. Not right? Click an end of the line to switch between one and many.');
+    say((child === parent ? label(child) + ' is linked to itself: ' : 'One ' + label(parent) + ' has many ' + label(child) + ': ')
+      + (fk.name || 'the attribute') + ' is the foreign key' + (key.name ? ' to ' + key.name : '') + '. Click an end of the line to switch between one and many.');
   }
 
   /** A click on an end of a line: one ↔ many. */
   function toggleEnd(data) {
     if (data.kind === 'mm') {
-      // Many-to-many, one end becomes "one": that entity is the parent, the other gets the foreign key.
       var m = many[+data.index];
       if (!m) return;
-      var a = byId(m.a);
-      var b = byId(m.b);
-      many.splice(+data.index, 1);
-      if (a && b) addForeignKey(data.end === 'a' ? b : a, data.end === 'a' ? a : b, false);
-      say('One-to-many now: the foreign key is in the entity on the “many” side.');
+      // Back to the foreign key this line was made from, when the clicked end is the side that was "one".
+      var one = data.end === 'a' ? m.a : m.b;
+      if (m.was && m.was.parent === one && byId(m.was.parent) && byId(m.was.child) && byId(m.was.child).attrs.indexOf(m.was.attr) >= 0) {
+        m.was.attr.fk = true;
+        m.was.attr.ref = m.was.parent;
+        m.was.attr.refAttr = byId(m.was.parent).attrs.indexOf(m.was.key) >= 0 ? m.was.key : null;
+        many.splice(+data.index, 1);
+        say('One-to-many again: ' + (m.was.attr.name || 'the attribute') + ' is the foreign key.');
+      } else {
+        say('A “one” side needs a foreign key in the other entity: add that attribute there and drag its + onto the key. Then remove this line.');
+        return;
+      }
     } else {
       var child = byId(+data.entity);
       var attr = child ? child.attrs[+data.index] : null;
-      var parent = attr ? byId(attr.ref) : null;
+      var parent = attr ? target(attr) : null;
       if (!attr || !parent) return;
       if (data.end === 'a') {
         // The child's end: many ↔ one (one-to-one).
@@ -473,15 +900,15 @@
         say(attr.unique ? 'One-to-one: every ' + label(parent) + ' has at most one ' + label(child) + '.'
                         : 'One ' + label(parent) + ' has many ' + label(child) + '.');
       } else if (attr.unique) {
-        // One-to-one, the parent's end becomes "many": the relationship turns around, the foreign key moves.
-        removeForeignKey(child, attr);
-        addForeignKey(parent, child, false);
-        say('One ' + label(child) + ' has many ' + label(parent) + ': the foreign key moved to ' + label(parent) + '.');
+        say('To turn the relationship around, the foreign key must be in ' + label(parent) + ': remove this line and draw it from an attribute there.');
+        return;
       } else if (child !== parent) {
-        // Many at both ends: no foreign key can hold that.
-        removeForeignKey(child, attr);
-        many.push({ a: parent.id, b: child.id });
+        // Many at both ends: no foreign key can hold that. The attribute stays, without its link.
+        many.push({ a: parent.id, b: child.id, was: { parent: parent.id, child: child.id, attr: attr, key: attr.refAttr } });
+        unlink(attr);
         say('Many-to-many: no foreign key can store this. Tables need a link table in between.');
+      } else {
+        return;
       }
     }
     render();
@@ -493,11 +920,11 @@
       many.splice(+data.index, 1);
     } else {
       var e = byId(+data.entity);
-      if (e && e.attrs[+data.index]) removeForeignKey(e, e.attrs[+data.index]);
+      if (e && e.attrs[+data.index]) unlink(e.attrs[+data.index]);
     }
     render();
     sync();
-    say('Relationship removed.');
+    say('Relationship removed. The attribute is still there.');
   }
 
   function stopPicking() {
@@ -514,9 +941,67 @@
     return { box: box, entity: e, row: row, attr: row && e ? e.attrs[+row.dataset.index] : null };
   }
 
+  var MAGNET = 40;      // px around an entity (on screen) in which a dragged + is pulled to it
+
+  /**
+   * Where a relationship being dragged from (from, fromAttr) would land: the
+   * entity at or near the drawing point p, and the row in it that fits best.
+   * Over the rows: the row under the pointer. On the name bar or in the margin
+   * around the entity: the attribute with the same name as the dragged one,
+   * else the primary key, else the nearest row. Returns {entity, attr, index} or null.
+   */
+  function magnet(p, from, fromAttr) {
+    var reach = MAGNET / view.z;
+    var best = null;
+    entities.forEach(function (e) {
+      if (!e.attrs.length) return;
+      var h = height(e);
+      var dx = Math.max(e.x - p.x, 0, p.x - (e.x + e.w));
+      var dy = Math.max(e.y - p.y, 0, p.y - (e.y + h));
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d > reach || (best && d >= best.d)) return;
+      var inside = d === 0;
+      var index = -1;
+      var onRows = inside && p.y >= e.y + HEAD_H && p.y < e.y + HEAD_H + e.attrs.length * ROW_H;
+      if (onRows) {
+        index = Math.floor((p.y - e.y - HEAD_H) / ROW_H);
+      } else {
+        var wanted = fromAttr.name ? norm(fromAttr.name) : '';
+        e.attrs.some(function (a, i) { if (wanted && norm(a.name) === wanted && a !== fromAttr) { index = i; return true; } return false; });
+        if (index < 0) e.attrs.some(function (a, i) { if (a.pk && a !== fromAttr) { index = i; return true; } return false; });
+        if (index < 0) {
+          var y = Math.max(e.y + HEAD_H, Math.min(p.y, e.y + HEAD_H + e.attrs.length * ROW_H - 1));
+          index = Math.floor((y - e.y - HEAD_H) / ROW_H);
+        }
+      }
+      if (e.attrs[index] === fromAttr) {
+        // Not the row the line starts from: the next one, if there is one.
+        index = e.attrs.length > 1 ? (index + 1) % e.attrs.length : -1;
+      }
+      if (index < 0) return;
+      best = { entity: e, attr: e.attrs[index], index: index, d: d };
+    });
+    return best;
+  }
+
+  /** The attribute row under the pointer, as {entity, attr, row}. */
+  function rowUnder(ev) {
+    var over = document.elementFromPoint(ev.clientX, ev.clientY);
+    var row = over && over.closest ? over.closest('.ent-row') : null;
+    if (!row) return null;
+    var e = byId(+row.closest('.ent').dataset.id);
+    var a = e ? e.attrs[+row.dataset.index] : null;
+    return a ? { entity: e, attr: a, row: row } : null;
+  }
+
+  /** A pointer position in the coordinates of the drawing (the view may be moved and zoomed). */
   function surfacePoint(ev) {
-    var r = surface.getBoundingClientRect();
-    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    var r = canvas.getBoundingClientRect();
+    return { x: (ev.clientX - r.left - canvas.clientLeft - view.x) / view.z, y: (ev.clientY - r.top - canvas.clientTop - view.y) / view.z };
+  }
+
+  function clearMarks(cls) {
+    Array.prototype.forEach.call(surface.querySelectorAll('.' + cls), function (n) { n.classList.remove(cls); });
   }
 
   // -------------------------------------------------------------------------
@@ -552,7 +1037,7 @@
     if (clean !== ev.target.value) ev.target.value = clean;   // letters, digits and _ only
     if (ev.target.classList.contains('ent-name')) hit.entity.name = clean;
     else if (hit.attr) hit.attr.name = clean;
-    sync();
+    sync(true);
   });
 
   // Choosing a data type.
@@ -577,13 +1062,14 @@
     else if (!hit.row || ev.target.value !== '') addAttribute(hit.entity);
   });
 
-  // Buttons inside an entity, the ends of a line, and choosing the other side of a relationship by clicking.
+  // Buttons inside an entity, the ends of a line, and choosing the other row of a relationship by clicking.
   surface.addEventListener('click', function (ev) {
     var hit = fromEvent(ev);
     if (picking) {
       var p = picking;
       stopPicking();
-      if (hit && hit.entity) connect(p.entity, hit.entity);
+      if (hit && hit.attr) linkRows(p.entity, p.attr, hit.entity, hit.attr);
+      else if (hit) say('Click an attribute, not the entity: a relationship joins two attributes.');
       return;
     }
     var end = ev.target.closest('.end-hit');
@@ -593,36 +1079,34 @@
 
     if (!hit || !hit.entity || ev.target.tagName !== 'BUTTON') return;
     var e = hit.entity;
+    var a = hit.attr;
     var cls = ev.target.classList;
     if (cls.contains('ent-add')) {
       addAttribute(e);
-    } else if (cls.contains('color')) {
-      e.color = COLOR_NAMES[(COLOR_NAMES.indexOf(e.color) + 1) % COLOR_NAMES.length];
-      render();
-      sync();
-    } else if (cls.contains('pk') && hit.attr) {
-      hit.attr.pk = !hit.attr.pk;
-      render();
-      sync();
-    } else if (cls.contains('x') && hit.attr) {
-      e.attrs.splice(+hit.row.dataset.index, 1);
-      render();
-      sync();
-    } else if (cls.contains('x')) {
-      if (e.attrs.length && !window.confirm('Remove the entity ' + label(e) + ' and its attributes?')) return;
-      entities = entities.filter(function (o) { return o !== e; });
-      // Relationships with it go too: the foreign keys that pointed to it, the many-to-many lines.
-      entities.forEach(function (o) {
-        o.attrs.filter(function (a) { return a.ref === e.id; }).forEach(function (a) { removeForeignKey(o, a); });
-      });
-      many = many.filter(function (m) { return m.a !== e.id && m.b !== e.id; });
-      render();
-      sync();
+      return;
     }
+    if (cls.contains('color')) {
+      e.color = COLOR_NAMES[(COLOR_NAMES.indexOf(e.color) + 1) % COLOR_NAMES.length];
+    } else if (cls.contains('pk') && a) {
+      a.pk = !a.pk;
+    } else if (cls.contains('fk') && a) {
+      a.fk = !a.fk;
+      if (!a.fk) unlink(a);                       // no foreign key, no relationship
+      say(a.fk ? 'Foreign key. Now drag its + onto the key it points to.' : '');
+    } else if (cls.contains('x') && a) {
+      e.attrs.splice(e.attrs.indexOf(a), 1);
+      forget(function (o) { return o.refAttr === a || o === a; });
+    } else if (cls.contains('x')) {
+      removeEntity(e);
+      return;
+    } else {
+      return;
+    }
+    render();
+    sync();
   });
 
-  // Moving an entity by its bar, and dragging a connector to another entity.
-  var moving = null;   // {entity, box, dx, dy}
+  // The click that ends a drag (or the first click of click-then-click linking) is not a click on what is under it.
   var suppressClick = false;
   function swallowNextClick() {
     suppressClick = true;
@@ -636,72 +1120,289 @@
     if (ev.button !== undefined && ev.button !== 0) return;
     var hit = fromEvent(ev);
     if (!hit || !hit.entity || picking) return;
-    if (ev.target.classList.contains('port')) {
+    var e = hit.entity;
+    var cls = ev.target.classList;
+    var p = surfacePoint(ev);
+    if (cls.contains('link') && hit.attr) {
+      // Relationship: from this row to another row.
       ev.preventDefault();
-      linking = { entity: hit.entity, side: ev.target.classList.contains('right') ? 1 : -1, moved: false, startX: ev.clientX, startY: ev.clientY, temp: null };
-      return;
-    }
-    if (ev.target.closest('.ent-head') && ev.target.tagName !== 'INPUT' && ev.target.tagName !== 'BUTTON') {
+      drag = { kind: 'link', entity: e, attr: hit.attr, index: +hit.row.dataset.index, moved: false, startX: ev.clientX, startY: ev.clientY, temp: null };
+    } else if (cls.contains('grip') && hit.attr) {
+      // Order of the attributes.
       ev.preventDefault();
-      var p = surfacePoint(ev);
-      moving = { entity: hit.entity, box: hit.box, dx: p.x - hit.entity.x, dy: p.y - hit.entity.y };
-      hit.box.classList.add('moving');
+      drag = { kind: 'order', entity: e, box: hit.box, from: +hit.row.dataset.index, to: +hit.row.dataset.index };
+      hit.row.classList.add('dragging');
+    } else if (cls.contains('resize')) {
+      ev.preventDefault();
+      drag = { kind: 'size', entity: e, box: hit.box, x: p.x, y: p.y, w: e.w, h: height(e) };
+      hit.box.classList.add('sizing');
+    } else if (ev.target.closest('.ent-head') && ev.target.tagName !== 'INPUT' && ev.target.tagName !== 'BUTTON') {
+      ev.preventDefault();
+      canvas.focus({ preventScroll: true });
+      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+        // Add to or take from the selection; no move.
+        if (selected[e.id]) delete selected[e.id]; else selected[e.id] = true;
+        markSelection();
+        return;
+      }
+      if (!selected[e.id]) select([e]);           // dragging one that is not selected: only that one
+      drag = {
+        kind: 'move', entity: e, x: p.x, y: p.y,
+        group: selection().map(function (o) { return { e: o, x: o.x, y: o.y, box: entityNode(o) }; })
+      };
+      drag.group.forEach(function (g) { g.box.classList.add('moving'); });
     }
   });
 
-  function entityUnder(ev) {
-    var over = document.elementFromPoint(ev.clientX, ev.clientY);
-    return over && over.closest ? over.closest('.ent') : null;
+  // Right-click: a small menu. On the background "New entity here", on an entity what you can do with it.
+  var menu = el('div', 'erd-menu');
+  menu.hidden = true;
+  canvas.appendChild(menu);
+  function closeMenu() { menu.hidden = true; }
+  function openMenu(ev, items) {
+    while (menu.firstChild) menu.removeChild(menu.firstChild);
+    items.forEach(function (item) {
+      var b = button('', item[0]);
+      b.disabled = item[2] === false;
+      b.addEventListener('click', function () { closeMenu(); item[1](); });
+      menu.appendChild(b);
+    });
+    menu.hidden = false;
+    var r = canvas.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(ev.clientX - r.left, canvas.clientWidth - menu.offsetWidth - 4)) + 'px';
+    menu.style.top = Math.max(4, Math.min(ev.clientY - r.top, canvas.clientHeight - menu.offsetHeight - 4)) + 'px';
   }
+  function selectAll() {
+    select(entities);
+    say(entities.length ? 'All ' + entities.length + ' entities selected: drag one of them to move them together. Esc clears the selection.' : 'Nothing to select yet.');
+  }
+  function removeSelected() {
+    var list = selection();
+    if (!list.length) return;
+    if (!window.confirm('Remove the ' + list.length + ' selected entit' + (list.length === 1 ? 'y' : 'ies') + ' and their attributes?')) return;
+    entities = entities.filter(function (o) { return !selected[o.id]; });
+    forget(function (o) { return !!selected[o.ref]; });
+    many = many.filter(function (m) { return !selected[m.a] && !selected[m.b]; });
+    selected = {};
+    render();
+    sync();
+  }
+  function removeEntity(e) {
+    if (e.attrs.length && !window.confirm('Remove the entity ' + label(e) + ' and its attributes?')) return;
+    entities = entities.filter(function (o) { return o !== e; });
+    forget(function (o) { return o.ref === e.id; });
+    many = many.filter(function (m) { return m.a !== e.id && m.b !== e.id; });
+    render();
+    sync();
+  }
+  canvas.addEventListener('contextmenu', function (ev) {
+    if (ev.target.closest('.erd-menu, .erd-map, .erd-legend')) { ev.preventDefault(); return; }
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(ev.target.tagName)) return;      // the browser's own menu: copy, paste
+    ev.preventDefault();
+    stopPicking();
+    var p = surfacePoint(ev);
+    var hit = fromEvent(ev);
+    if (hit && hit.entity) {
+      var e = hit.entity;
+      openMenu(ev, [
+        ['Add attribute', function () { addAttribute(e); }],
+        ['Next colour', function () { e.color = COLOR_NAMES[(COLOR_NAMES.indexOf(e.color) + 1) % COLOR_NAMES.length]; render(); sync(); }],
+        ['Remove entity', function () { removeEntity(e); }]
+      ]);
+    } else {
+      openMenu(ev, [
+        ['New entity here', function () { addEntity(p.x, p.y); }],
+        ['Select all (Ctrl+A)', selectAll, entities.length > 0],
+        ['Show everything (Fit)', fit],
+        ['Undo', function () { travel(-1); }, at > 0],
+        ['Redo', function () { travel(1); }, at < history.length - 1]
+      ]);
+    }
+  });
+  document.addEventListener('pointerdown', function (ev) {
+    if (!menu.hidden && !menu.contains(ev.target)) closeMenu();
+  }, true);
+  // Double-click on the background: a new entity there.
+  canvas.addEventListener('dblclick', function (ev) {
+    if (ev.target !== canvas && ev.target !== surface && ev.target !== empty) return;
+    var p = surfacePoint(ev);
+    addEntity(p.x - 20, p.y - HEAD_H / 2);
+  });
+
+  // The background: drag it to move around (the canvas has no edges).
+  canvas.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    if (ev.target !== canvas && ev.target !== surface && ev.target !== lines && ev.target !== empty) return;
+    if (picking) return;
+    ev.preventDefault();
+    canvas.focus({ preventScroll: true });
+    drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false };
+    canvas.classList.add('panning');
+  });
+
+  // Ctrl + wheel (and a pinch on a trackpad) zooms around the pointer. In full screen the wheel alone moves the canvas.
+  canvas.addEventListener('wheel', function (ev) {
+    var r = canvas.getBoundingClientRect();
+    if (ev.ctrlKey || ev.metaKey) {
+      ev.preventDefault();
+      // One notch of a mouse wheel (deltaY about 100) is ZOOM_STEP; a trackpad pinch sends many small deltas
+      // and so zooms smoothly. Capped per event, so a fast wheel or a hard pinch never jumps.
+      var dy = ev.deltaMode === 1 ? ev.deltaY * 33 : ev.deltaY;
+      dy = Math.max(-100, Math.min(100, dy));
+      zoomTo(view.z * Math.pow(ZOOM_STEP, -dy / 100), ev.clientX - r.left, ev.clientY - r.top);
+    } else if (form.classList.contains('full')) {
+      ev.preventDefault();
+      pan(-ev.deltaX, -ev.deltaY);
+    }
+  }, { passive: false });
 
   document.addEventListener('pointermove', function (ev) {
-    if (moving) {
-      var p = surfacePoint(ev);
-      moving.entity.x = Math.max(0, Math.round(p.x - moving.dx));
-      moving.entity.y = Math.max(0, Math.round(p.y - moving.dy));
-      moving.box.style.left = moving.entity.x + 'px';
-      moving.box.style.top = moving.entity.y + 'px';
+    if (!drag) return;
+    if (drag.kind === 'pan') {
+      if (!drag.moved && Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) < 4) return;
+      drag.moved = true;
+      view.x = drag.vx + ev.clientX - drag.x;
+      view.y = drag.vy + ev.clientY - drag.y;
+      applyView();
+      return;
+    }
+    var p = surfacePoint(ev);
+    var e = drag.entity;
+    if (drag.kind === 'move') {
+      drag.group.forEach(function (g) {
+        g.e.x = Math.round(g.x + p.x - drag.x);
+        g.e.y = Math.round(g.y + p.y - drag.y);
+        g.box.style.left = g.e.x + 'px';
+        g.box.style.top = g.e.y + 'px';
+      });
       draw();
-    } else if (linking) {
-      if (!linking.moved && Math.abs(ev.clientX - linking.startX) + Math.abs(ev.clientY - linking.startY) < 6) return;
-      linking.moved = true;
-      var q = surfacePoint(ev);
-      var e = linking.entity;
-      if (linking.temp) linking.temp.remove();
-      linking.temp = svgEl('path', { d: 'M' + (e.x + (linking.side > 0 ? BOX_W : 0)) + ' ' + (e.y + HEAD_H / 2) + ' L' + q.x + ' ' + q.y, 'class': 'temp' });
-      var box = entityUnder(ev);
-      Array.prototype.forEach.call(surface.querySelectorAll('.ent.target'), function (n) { n.classList.remove('target'); });
-      if (box) box.classList.add('target');
-      say(box ? 'Release: one ' + label(e) + ' has many ' + label(byId(+box.dataset.id)) + '.' : 'Drag onto the entity on the “many” side.');
+    } else if (drag.kind === 'size') {
+      e.w = Math.min(MAX_W, Math.max(MIN_W, Math.round(drag.w + p.x - drag.x)));
+      var h = Math.round(drag.h + p.y - drag.y);
+      e.h = h > natural(e) ? h : 0;               // not smaller than its rows
+      drag.box.style.width = e.w + 'px';
+      drag.box.style.minHeight = height(e) + 'px';
+      draw();
+    } else if (drag.kind === 'order') {
+      var to = Math.max(0, Math.min(e.attrs.length - 1, Math.floor((p.y - e.y - HEAD_H) / ROW_H)));
+      drag.to = to;
+      clearMarks('drop-before');
+      clearMarks('drop-after');
+      var rows = drag.box.querySelectorAll('.ent-row');
+      if (to !== drag.from) rows[to].classList.add(to < drag.from ? 'drop-before' : 'drop-after');
+    } else if (drag.kind === 'link') {
+      if (!drag.moved && Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) < 6) return;
+      drag.moved = true;
+      if (drag.temp) drag.temp.remove();
+      clearMarks('target-row');
+      clearMarks('target');
+      var snap = magnet(p, e, drag.attr);
+      drag.snap = snap;
+      // The loose end: at the pointer, or pulled to the edge of the row it snapped to.
+      var endX = p.x;
+      var endY = p.y;
+      if (snap) {
+        var t = snap.entity;
+        endX = p.x < t.x + t.w / 2 && t !== e ? t.x : t.x + t.w;
+        endY = rowY(t, snap.index);
+      }
+      var fromRight = endX > e.x + e.w / 2;
+      drag.temp = svgEl('path', { d: 'M' + (e.x + (fromRight ? e.w : 0)) + ' ' + rowY(e, drag.index) + ' L' + endX + ' ' + endY, 'class': 'temp' + (snap ? ' snapped' : '') });
+      if (snap) {
+        var node = entityNode(snap.entity);
+        node.classList.add('target');
+        node.querySelectorAll('.ent-row')[snap.index].classList.add('target-row');
+        say('Release to link ' + (drag.attr.name || 'this attribute') + ' with ' + label(snap.entity) + '.' + (snap.attr.name || 'attribute')
+          + '. Move over another row to choose that one.');
+      } else {
+        say('Drag towards the entity it belongs with: the line snaps to it.');
+      }
     }
   });
 
   document.addEventListener('pointerup', function (ev) {
-    if (moving) {
-      moving.box.classList.remove('moving');
-      moving = null;
+    if (!drag) return;
+    var d = drag;
+    drag = null;
+    if (d.kind === 'pan') {
+      canvas.classList.remove('panning');
+      if (!d.moved && selection().length) { select([]); say(); }     // a click on the background: nothing selected
+      return;
+    }
+    if (d.kind === 'move') {
+      d.group.forEach(function (g) { g.box.classList.remove('moving'); });
       draw();
       sync();
-    } else if (linking) {
-      var l = linking;
-      linking = null;
-      if (l.temp) l.temp.remove();
-      swallowNextClick();         // the click that ends this press is not a click on an entity
-      if (l.moved) {
-        var box = entityUnder(ev);
-        var target = box ? byId(+box.dataset.id) : null;
-        if (target) connect(l.entity, target);
-        else { render(); say(); }
+    } else if (d.kind === 'size') {
+      d.box.classList.remove('sizing');
+      draw();
+      sync();
+    } else if (d.kind === 'order') {
+      if (d.to !== d.from) d.entity.attrs.splice(d.to, 0, d.entity.attrs.splice(d.from, 1)[0]);
+      render();
+      if (d.to !== d.from) sync();
+    } else if (d.kind === 'link') {
+      if (d.temp) d.temp.remove();
+      clearMarks('target-row');
+      clearMarks('target');
+      swallowNextClick();
+      if (d.moved) {
+        var snap = magnet(surfacePoint(ev), d.entity, d.attr);
+        if (snap) linkRows(d.entity, d.attr, snap.entity, snap.attr);
+        else { draw(); say('Not linked: release on or near an entity that has attributes.'); }
       } else {
-        picking = { entity: l.entity };
+        picking = { entity: d.entity, attr: d.attr };
         canvas.classList.add('picking');
-        say('Now click the entity on the “many” side (Esc cancels).');
+        say('Now click the attribute it belongs with (Esc cancels).');
       }
     }
   });
 
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && picking) stopPicking();
+    var inEditor = root.contains(ev.target) || ev.target === document.body;
+    var typing = /^(INPUT|SELECT|TEXTAREA)$/.test(ev.target.tagName);
+    if (ev.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
+    if (ev.key === 'Escape' && picking) { stopPicking(); return; }
+    if (ev.key === 'Escape' && selection().length) { select([]); say(); return; }
+    if (ev.key === 'Escape' && form.classList.contains('full')) { setFull(false); return; }
+
+    // Ctrl+A: every entity (inside a text box it selects the text, as usual).
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a' && inEditor && !typing) {
+      ev.preventDefault();
+      selectAll();
+      return;
+    }
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && inEditor && !typing && ev.target.tagName !== 'BUTTON' && selection().length) {
+      ev.preventDefault();
+      removeSelected();
+      return;
+    }
+
+    // Undo / redo, also while a name is being typed (the drawing is one history, not one per box).
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && inEditor && ev.target !== textarea) {
+      var key = ev.key.toLowerCase();
+      if (key === 'z' || key === 'y') {
+        ev.preventDefault();
+        travel(key === 'y' || ev.shiftKey ? 1 : -1);
+        return;
+      }
+    }
+
+    // Moving and zooming with the keyboard, when no text is being typed.
+    if (inEditor && !typing && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      var step = ev.shiftKey ? 240 : 60;
+      var handled = true;
+      if (ev.key === 'ArrowLeft') pan(step, 0);
+      else if (ev.key === 'ArrowRight') pan(-step, 0);
+      else if (ev.key === 'ArrowUp') pan(0, step);
+      else if (ev.key === 'ArrowDown') pan(0, -step);
+      else if (ev.key === '+' || ev.key === '=') zoomTo(view.z * ZOOM_STEP);
+      else if (ev.key === '-' || ev.key === '_') zoomTo(view.z / ZOOM_STEP);
+      else if (ev.key === '0') fit();
+      else handled = false;
+      if (handled) { ev.preventDefault(); return; }
+    }
+
     // Ctrl+Enter / Cmd+Enter checks, from anywhere in the editor.
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && (form.contains(ev.target) || ev.target === document.body)) {
       ev.preventDefault();
@@ -714,15 +1415,29 @@
   });
 
   // Toolbar.
+  undoButton.addEventListener('click', function () { travel(-1); });
+  redoButton.addEventListener('click', function () { travel(1); });
+  zoomIn.addEventListener('click', function () { zoomTo(view.z * ZOOM_STEP); });
+  zoomOut.addEventListener('click', function () { zoomTo(view.z / ZOOM_STEP); });
+  zoomLabel.addEventListener('click', function () { zoomTo(1); });
+  fitButton.addEventListener('click', fit);
+  fullButton.addEventListener('click', function () { setFull(!form.classList.contains('full')); });
+  legendButton.addEventListener('click', function () { showPanel(legend, legendButton, 'legend', legend.hidden); });
+  mapButton.addEventListener('click', function () { showPanel(map, mapButton, 'map', map.hidden); });
+
   tidyButton.addEventListener('click', function () {
-    var perRow = Math.max(1, Math.floor((canvas.clientWidth - PAD) / (BOX_W + GAP_X)));
+    var widest = entities.reduce(function (w, e) { return Math.max(w, e.w); }, BOX_W);
+    var perRow = Math.max(1, Math.floor((canvas.clientWidth / view.z - PAD) / (widest + GAP_X)));
     var tops = [];
     entities.forEach(function (e, i) {
       var c = i % perRow;
-      e.x = PAD + c * (BOX_W + GAP_X);
+      e.x = PAD + c * (widest + GAP_X);
       e.y = tops[c] || PAD;
       tops[c] = e.y + height(e) + GAP_Y;
     });
+    view.x = 0;
+    view.y = 0;
+    applyView();
     render();
     sync();
   });
@@ -736,14 +1451,21 @@
   textarea.addEventListener('input', function () {
     if (ownInput) return;
     clearTimeout(textTimer);
-    textTimer = setTimeout(function () { load(textarea.value); render(); }, 400);
+    textTimer = setTimeout(function () {
+      load(textarea.value);
+      render();
+      remember();
+      // A step in the history, without rewriting the text that is being typed.
+      var text = serialize();
+      if (text !== history[at]) { history.splice(at + 1, history.length, text); at = history.length - 1; historyButtons(); }
+    }, 400);
   });
 
   // Check: send the text, show the verdict.
   var checkButton = form.querySelector('button[type=submit]');
   var busy = false;
   function check() {
-    if (busy) return;
+    if (busy || freeKey) return;          // free drawing: nothing to check
     busy = true;
     if (checkButton) checkButton.disabled = true;
     if (!textarea.matches(':focus')) textarea.value = serialize();
@@ -763,7 +1485,8 @@
       if (!results) return;
       results.innerHTML = html;
       var verdict = results.querySelector('.verdict');
-      if (verdict && verdict.scrollIntoView) verdict.scrollIntoView({ block: 'nearest' });
+      if (verdict && form.classList.contains('full')) say(verdict.textContent);   // the verdict itself is behind the canvas
+      else if (verdict && verdict.scrollIntoView) verdict.scrollIntoView({ block: 'nearest' });
     }).catch(function (err) {
       if (results) results.textContent = 'Request failed: ' + err.message + '. Try again.';
     }).then(function () {
@@ -778,10 +1501,17 @@
     check();
   });
 
-  window.addEventListener('resize', draw);
-  if (window.ResizeObserver) new ResizeObserver(draw).observe(canvas);   // the canvas can be made taller
 
+  if (freeKey && textarea.value.trim() === '') {
+    try { textarea.value = localStorage.getItem(freeKey) || ''; } catch (e) { /* no storage: start empty */ }
+  }
+  showPanel(legend, legendButton, 'legend', preference('legend', true));
+  showPanel(map, mapButton, 'map', preference('map', true));
   load(textarea.value);
   render();
+  applyView();
+  history = [serialize()];
+  at = 0;
+  historyButtons();
   say();
 })();

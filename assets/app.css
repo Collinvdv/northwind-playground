@@ -153,15 +153,36 @@ aside .erd-types code { flex:none; width:68px; font-size:11px; }
 .erd-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px; border-bottom:1px solid var(--line); background:#fff; }
 .erd-chip { display:inline-flex; align-items:center; padding:6px 14px; border:1.5px dashed var(--accent); border-radius:6px; background:#eef2ff; color:var(--accent); font-size:13px; font-weight:600; cursor:grab; user-select:none; }
 .erd-chip:hover, .erd-chip:focus-visible { background:#dbe4ff; outline:none; }
-button.erd-tool { padding:5px 12px; font-size:13px; }
-.erd-status { flex:1; min-width:200px; }
-.erd-canvas { position:relative; height:480px; min-height:220px; overflow:auto; resize:vertical; background:#f8fafc radial-gradient(#d3d9e2 1px, transparent 1px) 0 0 / 20px 20px; }
+button.erd-tool { padding:5px 10px; font-size:13px; }
+button.erd-tool.erd-zoom { min-width:52px; font-variant-numeric:tabular-nums; }
+.erd-group { display:inline-flex; gap:2px; }
+.erd-group button.erd-tool { border-radius:0; }
+.erd-group button.erd-tool:first-child { border-radius:6px 0 0 6px; }
+.erd-group button.erd-tool:last-child { border-radius:0 6px 6px 0; }
+/* Full screen: the form (toolbar, canvas, Check) covers the window. */
+html.erd-full, html.erd-full body { overflow:hidden; }
+form.erdform.full { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; margin:0; padding:8px; border:0; border-radius:0; background:var(--panel); }
+form.erdform.full .erd-editor { flex:1; min-height:0; display:flex; flex-direction:column; }
+form.erdform.full .erd-canvas { flex:1; height:auto; min-height:0; resize:none; }
+form.erdform.full.show-text textarea { flex:none; height:150px; }
+/* Its own line of a fixed height: a longer or shorter message must never move the canvas under the pointer. */
+.erd-status { flex:0 0 100%; height:18px; line-height:18px; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.erd-canvas { position:relative; height:480px; min-height:220px; overflow:hidden; resize:vertical; cursor:grab; background:#f8fafc radial-gradient(#d3d9e2 1px, transparent 1px) 0 0 / 20px 20px; }
+.erd-canvas:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.erd-canvas.panning { cursor:grabbing; }
+/* Right-click menu of the canvas. */
+.erd-menu { position:absolute; z-index:5; min-width:170px; padding:4px; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,.18); cursor:default; }
+.erd-menu button { display:block; width:100%; padding:6px 10px; border:0; border-radius:5px; background:none; color:var(--text); font-size:13px; text-align:left; }
+.erd-menu button:hover:not(:disabled) { background:#eef2ff; color:var(--accent); filter:none; }
+.erd-menu button:disabled { color:#b3bac5; }
+.erd-canvas.panning .ent { pointer-events:none; }
 .erd-canvas.picking { cursor:crosshair; }
-.erd-surface { position:relative; min-width:100%; min-height:100%; }
+.erd-surface { position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; cursor:default; }
 .erd-empty { position:absolute; left:0; right:0; top:42%; margin:0; text-align:center; color:var(--muted); font-size:14px; pointer-events:none; }
-.erd-lines { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
+.erd-lines { position:absolute; left:0; top:0; width:1px; height:1px; pointer-events:none; overflow:visible; }
 .erd-lines path, .erd-lines line { stroke:#64748b; stroke-width:1.5; fill:none; stroke-linecap:round; }
 .erd-lines path.temp { stroke:#6d28d9; stroke-width:2; stroke-dasharray:6 4; }
+.erd-lines path.temp.snapped { stroke-dasharray:none; stroke-width:2.5; }
 /* A relationship: wide invisible stroke to hover, round click areas on the ends (one / many), × in the middle. */
 .erd-lines .rel path.hit { stroke:transparent; stroke-width:14; pointer-events:stroke; }
 .erd-lines .rel:hover path:not(.hit), .erd-lines .rel:hover line { stroke:#1d4ed8; }
@@ -172,8 +193,28 @@ button.erd-tool { padding:5px 12px; font-size:13px; }
 .erd-lines .rel-del circle { fill:#fff; stroke:#b91c1c; stroke-width:1.2; }
 .erd-lines .rel-del path { stroke:#b91c1c; stroke-width:1.6; }
 @media (hover:none) { .erd-lines .rel-del { opacity:1; } }
-.ent { position:absolute; width:264px; background:#fff; border:1px solid #c9cfd6; border-radius:6px; box-shadow:0 1px 3px rgba(15,23,42,.08); }
+.ent { position:absolute; width:290px; box-sizing:border-box; display:flex; flex-direction:column; background:#fff; border:1px solid #c9cfd6; border-radius:6px; box-shadow:0 1px 3px rgba(15,23,42,.08); }
 .ent.moving { box-shadow:0 8px 22px rgba(15,23,42,.22); z-index:2; }
+.ent.selected { outline:2px solid #f59e0b; outline-offset:2px; }
+button.erd-tool.on { background:#dbe4ff; color:var(--accent); }
+/* Legend (bottom right) and overview map (bottom left) lie over the canvas and do not move with it. */
+.erd-legend, .erd-map { position:absolute; bottom:8px; z-index:4; background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:8px; box-shadow:0 2px 8px rgba(15,23,42,.10); cursor:default; }
+.erd-legend { right:8px; padding:6px 10px 7px; font-size:12px; line-height:1.3; color:var(--text); }
+.erd-legend strong { display:block; margin-bottom:3px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+.erd-legend div { display:flex; align-items:center; gap:7px; height:19px; }
+.erd-legend .k { flex:none; display:inline-flex; align-items:center; justify-content:center; width:34px; height:15px; border-radius:4px; font-size:9px; font-weight:700; }
+.erd-legend .k.pk { background:var(--accent); color:#fff; width:26px; margin-right:8px; }
+.erd-legend .k.fk { background:#6d28d9; color:#fff; width:26px; margin-right:8px; }
+.erd-legend .k.plus { width:16px; height:16px; margin:0 9px; border:1.5px solid #c4b5fd; border-radius:50%; color:#6d28d9; font-size:13px; }
+.erd-legend .k.grip { color:#8a93a0; font-size:11px; letter-spacing:-2px; }
+.erd-legend svg { flex:none; }
+.erd-legend svg line { stroke:#64748b; stroke-width:1.5; stroke-linecap:round; }
+.erd-map { left:8px; width:190px; height:120px; overflow:hidden; cursor:pointer; touch-action:none; }
+.erd-map svg { display:block; }
+.erd-map rect { opacity:.75; }
+.erd-map rect.sel { stroke:#f59e0b; stroke-width:1.5; opacity:1; }
+.erd-map rect.frame { fill:rgba(29,78,216,.08); stroke:var(--accent); stroke-width:1.2; opacity:1; }
+.erd-legend[hidden], .erd-map[hidden] { display:none; }
 .ent.target, .erd-canvas.picking .ent:hover { outline:2px solid #6d28d9; outline-offset:2px; }
 .erd-canvas.picking .ent, .erd-canvas.picking .ent * { cursor:pointer; }
 .ent-head { display:flex; align-items:center; gap:5px; height:34px; box-sizing:border-box; padding:0 12px 0 12px; background:var(--accent); border-radius:5px 5px 0 0; cursor:move; touch-action:none; }
@@ -181,15 +222,20 @@ button.erd-tool { padding:5px 12px; font-size:13px; }
 .ent-head .ent-name::placeholder { color:rgba(255,255,255,.6); }
 .ent-head .ent-name:hover { background:rgba(255,255,255,.14); }
 .ent-head .ent-name:focus { background:rgba(255,255,255,.24); outline:none; }
-.ent-row { display:flex; align-items:center; gap:3px; height:29px; box-sizing:border-box; padding:0 3px 0 5px; border-bottom:1px solid #eceff3; }
+.ent-row { display:flex; align-items:center; gap:3px; flex:none; height:29px; box-sizing:border-box; padding:0 3px 0 2px; border-bottom:1px solid #eceff3; }
+.ent-row.dragging { background:#eef2ff; }
+.ent-row.drop-before { box-shadow:inset 0 2px 0 var(--accent); }
+.ent-row.drop-after { box-shadow:inset 0 -2px 0 var(--accent); }
+.ent-row.target-row, .erd-canvas.picking .ent-row:hover { background:#ede9fe; box-shadow:inset 0 0 0 2px #6d28d9; }
+.ent-row .grip { flex:none; width:12px; text-align:center; color:#b3bac5; font-size:11px; letter-spacing:-2px; line-height:1; cursor:grab; user-select:none; touch-action:none; }
+.ent-row .grip:hover { color:var(--accent); }
 .ent-row.is-fk { background:#faf8ff; }
 .ent-row .attr { flex:1; min-width:0; border:1px solid transparent; border-radius:4px; padding:3px 5px; font:12px ui-monospace, Menlo, Consolas, monospace; color:var(--text); background:transparent; }
 .ent-row .attr:hover { border-color:var(--line); }
 .ent-row .attr:focus { border-color:var(--accent); outline:none; background:#fff; }
-.ent-row select.type { flex:none; width:84px; height:21px; padding:0 2px; border:1px solid var(--line); border-radius:4px; background:#fff; color:#475569; font:10.5px ui-monospace, Menlo, Consolas, monospace; cursor:pointer; }
+.ent-row select.type { flex:none; width:80px; height:21px; padding:0 2px; border:1px solid var(--line); border-radius:4px; background:#fff; color:#475569; font:10.5px ui-monospace, Menlo, Consolas, monospace; cursor:pointer; }
 .ent-row select.type.none { color:#b45309; border-color:#fcd34d; background:#fffbeb; }
 .ent-row select.type:focus { border-color:var(--accent); outline:none; }
-.ent-row .fk-tag { flex:none; font-size:9px; font-weight:700; color:#6d28d9; padding:0 1px; cursor:default; }
 .ent button { font-family:inherit; line-height:1; }
 .ent button:hover { filter:none; }
 .ent button.pk { flex:none; width:26px; height:20px; padding:0; border:1px solid var(--line); border-radius:4px; background:#fff; color:#b3bac5; font-size:9px; font-weight:700; }
@@ -202,12 +248,18 @@ button.erd-tool { padding:5px 12px; font-size:13px; }
 /* Colour dot: click for the next colour. */
 .ent-head button.color { flex:none; width:16px; height:16px; padding:0; border:2px solid rgba(255,255,255,.85); border-radius:50%; background:conic-gradient(#1d4ed8, #15803d, #c2410c, #7e22ce, #b91c1c, #0f766e, #1d4ed8); cursor:pointer; }
 .ent-head button.color:hover { transform:scale(1.2); }
-/* Connectors on both sides of the name bar: drag one onto another entity for a relationship. */
-.ent button.port { position:absolute; top:9px; width:16px; height:16px; padding:0; border:2px solid #fff; border-radius:50%; background:#6d28d9; box-shadow:0 0 0 1px #6d28d9; cursor:crosshair; touch-action:none; z-index:1; }
-.ent button.port.left { left:-9px; }
-.ent button.port.right { right:-9px; }
-.ent button.port:hover { transform:scale(1.35); background:#8b5cf6; }
-.ent button.ent-add { display:block; width:100%; height:29px; padding:0 10px; border:0; border-radius:0 0 5px 5px; background:none; color:var(--accent); font-size:12px; text-align:left; }
+/* FK mark, next to PK. */
+.ent button.fk { flex:none; width:26px; height:20px; padding:0; border:1px solid var(--line); border-radius:4px; background:#fff; color:#b3bac5; font-size:9px; font-weight:700; }
+.ent button.fk:hover { border-color:#6d28d9; color:#6d28d9; }
+.ent button.fk.on { background:#6d28d9; border-color:#6d28d9; color:#fff; }
+/* The + behind an attribute: drag it onto an attribute of another entity for a relationship. */
+.ent button.link { flex:none; width:20px; height:20px; padding:0; border:1.5px solid #c4b5fd; border-radius:50%; background:#fff; color:#6d28d9; font-size:14px; font-weight:700; cursor:crosshair; touch-action:none; }
+.ent button.link:hover { background:#6d28d9; border-color:#6d28d9; color:#fff; }
+/* Corner to drag an entity bigger or smaller. */
+.ent .resize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize; touch-action:none; background:linear-gradient(135deg, transparent 50%, #b3bac5 50%, #b3bac5 58%, transparent 58%, transparent 70%, #b3bac5 70%, #b3bac5 78%, transparent 78%); border-radius:0 0 5px 0; }
+.ent .resize:hover { background:linear-gradient(135deg, transparent 50%, var(--accent) 50%, var(--accent) 58%, transparent 58%, transparent 70%, var(--accent) 70%, var(--accent) 78%, transparent 78%); }
+.ent.sizing { box-shadow:0 0 0 2px var(--accent); }
+.ent button.ent-add { display:block; flex:none; width:100%; height:29px; margin-top:auto; padding:0 18px 0 10px; border:0; border-radius:0 0 5px 5px; background:none; color:var(--accent); font-size:12px; text-align:left; }
 .ent button.ent-add:hover { background:#eef2ff; }
 .erd-error { margin:12px 0; padding:8px 12px; border:1px solid #fecaca; border-radius:8px; background:var(--errbg); color:var(--err); font-size:13px; }
 .lead em.tag { font-style:normal; font-size:10px; font-weight:700; color:var(--accent); }

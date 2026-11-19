@@ -50,6 +50,12 @@ pageStart('Course', 'home');
       <p>Run any SELECT on the whole database. Several statements, autocomplete, table list.</p>
       <span class="meta">Open playground</span>
     </a>
+    <a class="card playground" href="erd-draw.php">
+      <span class="num">Free practice</span>
+      <h2>Draw an ERD</h2>
+      <p>An empty canvas for your own diagrams: entities, attributes, keys and relationships. Nothing is checked.</p>
+      <span class="meta">Open canvas</span>
+    </a>
     <a class="card playground" href="erd.php" data-erd-open>
       <span class="num">Reference</span>
       <h2>Database diagram</h2>

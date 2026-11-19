@@ -17,8 +17,8 @@ can write one <strong>review</strong> for the order: a number of stars and a com
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [
@@ -60,7 +60,7 @@ Customers: CustomerID int PK, Name varchar, Email varchar, Address varchar',
             'type'     => 'erd',
             'title'    => 'Step 4: Couriers and reviews',
             'task'     => '<p>A courier (name, phone number) delivers an order; one courier delivers many orders. After delivery the customer can write one review for the order: a number of stars (1 to 5) and a comment (a longer text). An order has at most one review.</p><p>Add <code>Couriers</code> (<code>CourierID</code>, <code>Name</code>, <code>Phone</code>) with a foreign key <code>CourierID</code> in <code>Orders</code>, and <code>Reviews</code> (<code>ReviewID</code>, <code>Stars</code>, <code>Comment</code>) with a foreign key <code>OrderID</code>, one-to-one.</p>',
-            'hint'     => 'Couriers to Orders is one-to-many. Orders to Reviews is one-to-one: drag from <code>Orders</code> to <code>Reviews</code> and click the crow\'s foot at <code>Reviews</code>.',
+            'hint'     => 'Couriers to Orders is one-to-many. Orders to Reviews is one-to-one: link <code>OrderID</code> of <code>Reviews</code> to <code>OrderID</code> of <code>Orders</code> and click the crow\'s foot at <code>Reviews</code>.',
             'starter'  => 'Restaurants: RestaurantID int PK, Name varchar, City varchar, IsOpen boolean
 + Dishes: DishID int PK, Name varchar, Price decimal, IsVegetarian boolean, RestaurantID int > Restaurants
 Orders: OrderID int PK, OrderedAt datetime, CustomerID int > Customers, RestaurantID int > Restaurants

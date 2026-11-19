@@ -18,8 +18,8 @@ who is also an employee.</p>
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [
@@ -46,7 +46,7 @@ Customers: CustomerID int PK, FirstName varchar, LastName varchar, DriverLicense
             'type'     => 'erd',
             'title'    => 'Step 3: Pick-up and return',
             'task'     => '<p>A car is picked up at one branch and may be returned at another. Both are kept for every rental.</p><p>Add two relationships between <code>Branches</code> and <code>Rentals</code>. Call the foreign keys <code>PickupBranchID</code> and <code>ReturnBranchID</code>.</p>',
-            'hint'     => 'Drag from <code>Branches</code> to <code>Rentals</code> twice and rename the two new attributes: one column could not tell pick-up from return.',
+            'hint'     => '<code>Rentals</code> gets two foreign key attributes; drag the + of each onto <code>BranchID</code> of <code>Branches</code>. One column could not tell pick-up from return.',
             'starter'  => 'Branches: BranchID int PK, City varchar, Address varchar
 + Cars: CarID int PK, LicensePlate varchar, Brand varchar, Model varchar, DailyRate decimal, BranchID int > Branches
 Rentals: RentalID int PK, StartDate date, EndDate date, CustomerID int > Customers, CarID int > Cars
@@ -60,7 +60,7 @@ Customers: CustomerID int PK, FirstName varchar, LastName varchar, DriverLicense
             'type'     => 'erd',
             'title'    => 'Step 4: Extras and employees',
             'task'     => '<p>With a rental the customer can take extras; an extra has a name and a price per day. A rental can have several extras and an extra is taken with many rentals. The employees (first name, last name) work at one branch, and every employee has at most one manager, who is also an employee.</p><p>Add <code>Extras</code> (<code>ExtraID</code>, <code>Name</code>, <code>DailyPrice</code>) and the link table <code>RentalExtras</code> (composite key, no other attributes). Add <code>Employees</code> (<code>EmployeeID</code>, <code>FirstName</code>, <code>LastName</code>) with a foreign key <code>BranchID</code> and a foreign key <code>ManagerID</code> to itself.</p>',
-            'hint'     => '<code>RentalExtras</code> gets <code>RentalID</code> and <code>ExtraID</code>, both PK. For the manager: click a connector of <code>Employees</code>, then <code>Employees</code> itself, and rename the new attribute.',
+            'hint'     => '<code>RentalExtras</code> gets <code>RentalID</code> and <code>ExtraID</code>, both PK. For the manager: add <code>ManagerID</code> to <code>Employees</code> as a foreign key and drag its + onto <code>EmployeeID</code> of the same entity.',
             'starter'  => 'Branches: BranchID int PK, City varchar, Address varchar
 + Cars: CarID int PK, LicensePlate varchar, Brand varchar, Model varchar, DailyRate decimal, BranchID int > Branches
 Rentals: RentalID int PK, StartDate date, EndDate date, CustomerID int > Customers, CarID int > Cars, PickupBranchID int > Branches, ReturnBranchID int > Branches

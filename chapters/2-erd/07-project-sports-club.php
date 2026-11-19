@@ -17,8 +17,8 @@ on one field, starts at a certain moment and lasts a number of minutes.</p>
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [
@@ -34,7 +34,7 @@ Members: MemberID int PK, FirstName varchar, LastName varchar, BirthDate date',
             'type'     => 'erd',
             'title'    => 'Step 2: The coach',
             'task'     => '<p>Every team has one coach, who is a member of the club. A member can coach several teams.</p><p>Add this second relationship between <code>Members</code> and <code>Teams</code>: a foreign key <code>CoachID</code>.</p>',
-            'hint'     => 'One member coaches many teams, a team has one coach: the foreign key goes in <code>Teams</code>. Drag from <code>Members</code> to <code>Teams</code> and rename the new attribute.',
+            'hint'     => 'One member coaches many teams, a team has one coach: the foreign key <code>CoachID</code> goes in <code>Teams</code>. Drag its + onto <code>MemberID</code> of <code>Members</code>.',
             'starter'  => 'Teams: TeamID int PK, Name varchar, AgeGroup varchar
 TeamMembers: TeamID int PK > Teams, MemberID int PK > Members, ShirtNumber int
 Members: MemberID int PK, FirstName varchar, LastName varchar, BirthDate date',

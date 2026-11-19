@@ -18,7 +18,8 @@ Files:
 - `exercise.php` – one exercise: editor, **Check**, **Run only**, hint, solution
 - `playground.php` – free SQL editor (any reading query, several statements)
 - `exam.php` – exam mode: the playground without navigation (see below)
-- `exam-groupby.php`, `exam-innerjoin.php` – graded exams (GROUP BY, INNER JOIN): login, 6 assignments with Check, autosave, submit (see below). Each is a few lines that name an exam set
+- `erd-draw.php` – free drawing: the diagram editor without a task or a check; the drawing stays in the student's browser and can be saved as a text file
+- `exam-groupby.php`, `exam-innerjoin.php` – graded exams (GROUP BY, INNER JOIN): login, 6 or 9 assignments with Check, autosave, submit (see below). Each is a few lines that name an exam set
 - `exampage.php` – the exam page itself, shared by those two (not a URL of its own: answers 404)
 - `exam-admin.php` – teacher page of the exams (`?set=` picks one): who solved what, queries and results
 - `examlib.php` – shared code of the two exam pages (login, storing answers, points)
@@ -126,16 +127,50 @@ An exercise with `'type' => 'erd'` asks for a diagram instead of a query. The
 student gets a canvas (`assets/erd-editor.js`). It is a drawing only; no
 database is involved.
 
-- **Entity:** drag the Entity block onto the canvas (or click it), type the name.
+- **Entity:** drag the Entity block onto the canvas (or click it), or
+  right-click / double-click the canvas ("New entity here"); type the name.
+  Right-click an entity for "Add attribute" and "Remove entity". Drag its bar to move it, its bottom right corner to resize it, click
+  the dot in the bar for another colour.
 - **Attribute:** "+ attribute", a name and a **data type** from a list (INT,
-  DECIMAL, VARCHAR, TEXT, DATE, DATETIME, BOOLEAN). **PK** marks the key.
-- **Relationship:** drag a round connector on the side of the "one" entity onto
-  the "many" entity. The foreign key attribute is added (named and typed after
-  the key it points to); the student renames it when the task asks.
+  DECIMAL, VARCHAR, TEXT, DATE, DATETIME, BOOLEAN, BLOB). **PK** and **FK** in front
+  of it mark the primary key and a foreign key. Drag the grip in front of a
+  row to change the order.
+- **Relationship, row by row:** drag the **+** behind an attribute onto the
+  attribute it belongs with in another entity (or click the +, then that
+  attribute). The line is magnetic: within 40 px of an entity it snaps to it
+  (solid line, purple frame) and picks the row under the pointer, else the
+  attribute with the same name as the dragged one, else the primary key; so
+  dropping on the name bar or next to the box is enough. Nothing is added for
+  the student: the foreign key attribute must be there. The foreign key is the row marked FK, otherwise the row that is not
+  a primary key, otherwise the row the line started from. Switching FK off
+  removes the relationship.
 - **One or many:** a click on an end of the line switches it. Bar + crow's foot
-  is one-to-many, two bars one-to-one, two crow's feet many-to-many (no foreign
-  key; the check then asks for a link table). The × in the middle removes it.
-- **Colour:** the dot in an entity's bar. Not checked.
+  is one-to-many, two bars one-to-one, two crow's feet many-to-many (the
+  attribute stays but is no longer linked; the check then asks for a link
+  table). The × in the middle removes the relationship.
+- **Export / Import:** the drawing as a text file (`erd.txt`), to continue
+  later or on another computer, or to hand in. **PNG** saves it as a picture
+  (`erd.png`, double resolution). None of the three on the exam page.
+- **Moving around:** the canvas has no edges. Drag the background, or use the
+  arrow keys (Shift = bigger steps). Zoom with the − / + buttons, the + and −
+  keys or Ctrl + scroll wheel (25% to 250%); the percentage button goes back
+  to 100%, **Fit** (key 0) shows the whole drawing. **Full screen** gives the
+  canvas the whole browser window with Check under it; Esc leaves.
+- **Undo / redo:** the ↶ ↷ buttons, Ctrl+Z, Ctrl+Y or Shift+Ctrl+Z (⌘ on a
+  Mac); 200 steps, a typed word is one step. Zoom and place of the canvas are
+  not part of it.
+- **Selecting:** Ctrl+A (⌘+A) selects every entity; a click on an entity's bar
+  selects that one, Shift+click adds or removes one. Dragging a selected
+  entity moves all selected ones together, Delete removes them, Esc or a click
+  on the background clears the selection. Inside a text box Ctrl+A selects
+  the text, as usual. Also in the right-click menu of the canvas.
+- **Legend** and **Overview:** two buttons that show or hide a legend (bottom
+  right: PK, FK, one, many, the + and the grip) and a small map of the whole
+  drawing (bottom left: every entity as a block in its colour, the part on
+  screen as a frame; click or drag in it to go there). Both are on by default
+  and the choice is remembered in the browser. They are not part of the PNG.
+
+Not checked: colours, sizes, places and the order of attributes.
 
 **Check** compares the drawing with the model design in `solution`.
 
@@ -152,15 +187,17 @@ database is involved.
 
 You write `solution` (and `starter`) as text, in the notation of "Diagrams in a
 lesson" below. The editor stores the student's drawing in the same notation,
-with place and colour of each entity added (`Teams @24,24 #green: ...`); the
-**Text** button of the editor shows it.
+with place, size and colour of each entity added
+(`Teams @24,24,290,0 #green: ...`) and the column a foreign key points to
+(`TeamID int > Teams.TeamID`); the **Text** button of the editor shows it, and
+**Export** saves exactly this text.
 
 Compared: the tables, the columns of each table, the primary keys, the foreign
 keys (which column points to which table), the ends of each relationship
 (one-to-many or one-to-one) and the **kind of data type** of every column that
 has a type in the model design. Kinds: whole number (`int`, `smallint`, ...),
 decimal (`decimal`, `float`, ...), text (`varchar` and `text` count as the
-same), `date`, `datetime`, `boolean`. Leave the type out in `solution` and that
+same), `date`, `datetime`, `boolean`, `blob`. Leave the type out in `solution` and that
 column's type is free.
 
 Free: where the entities stand, their colours, the order of tables and columns,
@@ -341,9 +378,9 @@ Reset before a new group: delete `exam-data/group-by-*.json` (or
 `inner-join-*.json`).
 
 **Two exams exist:** `exam-groupby.php` (`exam-sets/group-by.php`) and
-`exam-innerjoin.php` (`exam-sets/inner-join.php`: six assignments that need
-only inner joins, from two tables to four, one self join, the last one
-sorted). Everything in this section holds for both; in file names and URLs
+`exam-innerjoin.php` (`exam-sets/inner-join.php`: nine assignments that need
+only inner joins, from two tables to four, one self join, one sorted; the
+last three add GROUP BY / HAVING). Everything in this section holds for both; in file names and URLs
 read `inner-join` for `group-by`. The teacher page shows one exam at a time:
 `exam-admin.php?set=inner-join`, or the "Exam:" links at the top. Each exam
 has its own password, students, days and results.

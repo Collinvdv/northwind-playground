@@ -1,16 +1,17 @@
 <?php
 /**
- * Exam: INNER JOIN. Six assignments, easy to hard, shown on exam-innerjoin.php.
+ * Exam: INNER JOIN. Nine assignments, shown on exam-innerjoin.php: six plain
+ * joins (easy to hard), then three joins combined with GROUP BY / HAVING.
  * Same exercise format as the lessons (see README "Adding or editing
  * exercises"); kept out of chapters/ so the course never shows them.
- * Only inner joins: no LEFT JOIN, no GROUP BY.
+ * Only inner joins: no LEFT JOIN.
  */
 
 return [
     'title' => 'Exam: INNER JOIN',
     // Needed to log in; the teacher can change it or close the exam on exam-admin.php?set=inner-join.
     'password' => 'innerjoin',
-    'intro' => '<p>Six assignments. Write one query per assignment and press <strong>Check</strong>. '
+    'intro' => '<p>Nine assignments. The last three also need <code>GROUP BY</code>. Write one query per assignment and press <strong>Check</strong>. '
         . 'You may check as often as you like; your last checked query counts. '
         . 'Every assignment needs one or more <code>INNER JOIN</code>s. '
         . 'Give the columns in the order the assignment asks; column names (aliases) are free.</p>',
@@ -57,6 +58,27 @@ return [
                 . 'Sort by <code>OrderID</code> ascending; within an order by <code>ProductName</code> ascending.</p>'
                 . '<p>Columns: company name, order id, product name, quantity.</p>',
             'solution' => "SELECT c.CompanyName, o.OrderID, p.ProductName, od.Quantity\nFROM Customers AS c\nINNER JOIN Orders AS o ON o.CustomerID = c.CustomerID\nINNER JOIN OrderDetails AS od ON od.OrderID = o.OrderID\nINNER JOIN Products AS p ON p.ProductID = od.ProductID\nWHERE c.City = 'London' AND od.Quantity >= 30\nORDER BY o.OrderID, p.ProductName;",
+            'ordered'  => true,
+        ],
+        [
+            'title'    => 'Products per category',
+            'task'     => '<p>Show for every category the <code>CategoryName</code> and the number of products in that category.</p>'
+                . '<p>Columns: category name, number of products.</p>',
+            'solution' => "SELECT c.CategoryName, COUNT(*) AS Products\nFROM Products AS p\nINNER JOIN Categories AS c ON c.CategoryID = p.CategoryID\nGROUP BY c.CategoryID, c.CategoryName;",
+        ],
+        [
+            'title'    => 'Suppliers with many products',
+            'task'     => '<p>Show the suppliers that deliver <strong>at least 4</strong> products: the <code>CompanyName</code> of the supplier and the number of products.</p>'
+                . '<p>Columns: supplier name, number of products.</p>',
+            'solution' => "SELECT s.CompanyName, COUNT(*) AS Products\nFROM Suppliers AS s\nINNER JOIN Products AS p ON p.SupplierID = s.SupplierID\nGROUP BY s.SupplierID, s.CompanyName\nHAVING COUNT(*) >= 4;",
+        ],
+        [
+            'title'    => 'Revenue per employee in 1997',
+            'task'     => '<p>Only look at orders placed in 1997 (based on <code>OrderDate</code>). Show for every employee the <code>LastName</code> and the total revenue of their orders: '
+                . 'the sum of <code>UnitPrice * Quantity</code> over all order lines (ignore <code>Discount</code>), rounded to 2 decimals. '
+                . 'Sort by revenue, highest first.</p>'
+                . '<p>Columns: employee last name, revenue.</p>',
+            'solution' => "SELECT e.LastName, ROUND(SUM(od.UnitPrice * od.Quantity), 2) AS Revenue\nFROM Employees AS e\nINNER JOIN Orders AS o ON o.EmployeeID = e.EmployeeID\nINNER JOIN OrderDetails AS od ON od.OrderID = o.OrderID\nWHERE YEAR(o.OrderDate) = 1997\nGROUP BY e.EmployeeID, e.LastName\nORDER BY Revenue DESC;",
             'ordered'  => true,
         ],
     ],

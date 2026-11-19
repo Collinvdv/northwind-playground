@@ -17,8 +17,8 @@ prescription the dosage (a short text such as <code>2 per day</code>) and the nu
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [
@@ -61,7 +61,7 @@ Patients: PatientID int PK, FirstName varchar, LastName varchar, BirthDate date,
             'type'     => 'erd',
             'title'    => 'Step 4: The head of a department',
             'task'     => '<p>Every department has one head, who is a doctor. A doctor is head of at most one department.</p><p>Add this second relationship between <code>Doctors</code> and <code>Departments</code>: a foreign key <code>HeadDoctorID</code> in <code>Departments</code>, one-to-one.</p>',
-            'hint'     => 'Drag from <code>Doctors</code> to <code>Departments</code>, rename the new attribute to <code>HeadDoctorID</code>, and click the crow\'s foot at <code>Departments</code> so that both ends are a bar.',
+            'hint'     => 'Add <code>HeadDoctorID</code> to <code>Departments</code> as a foreign key, drag its + onto <code>DoctorID</code> of <code>Doctors</code>, and click the crow\'s foot at <code>Departments</code> so that both ends are a bar.',
             'starter'  => 'Departments: DepartmentID int PK, Name varchar, Floor int
 + Doctors: DoctorID int PK, FirstName varchar, LastName varchar, Specialty varchar, DepartmentID int > Departments
 Appointments: AppointmentID int PK, StartsAt datetime, Reason text, PatientID int > Patients, DoctorID int > Doctors

@@ -30,6 +30,7 @@ Do not store what you can calculate: an age follows from a birth date, an order 
 <tr><td><code>DATE</code></td><td>A day</td><td>birth date, order date</td></tr>
 <tr><td><code>DATETIME</code></td><td>A day and a time</td><td>start of a film, moment of a payment</td></tr>
 <tr><td><code>BOOLEAN</code></td><td>Yes or no</td><td>discontinued, paid, active</td></tr>
+<tr><td><code>BLOB</code></td><td>A file stored in the database (binary data)</td><td>a photo, a PDF, a logo</td></tr>
 </table>
 <p>A phone number or postal code is text, not a number: you never calculate with it and it can start with a zero.</p>
 
@@ -210,10 +211,15 @@ Products #orange: ProductID PK int, Name varchar
 <ul>
 <li>Drag the <strong>Entity</strong> block onto the canvas and type the name of the table.</li>
 <li>Add attributes with <strong>+ attribute</strong>, choose a <strong>data type</strong> for each, and click <strong>PK</strong> in front of the key.</li>
-<li>For a relationship, drag one of the round <strong>connectors</strong> on the sides of the "one" entity onto the "many" entity.
-The foreign key is added for you; rename it if the task asks for another name.</li>
+<li>Click <strong>FK</strong> in front of an attribute that is a foreign key.</li>
+<li>For a relationship, drag the <strong>+</strong> behind the foreign key onto the key it points to in the other entity.
+You make the foreign key attribute yourself: nothing is added for you.</li>
 <li>Click an <strong>end of the line</strong> to switch it between one (bar) and many (crow's foot).</li>
-<li>The coloured dot in the bar of an entity changes its colour. Colours are yours to use: they are not checked.</li>
+<li>Drag an attribute by the grip in front of it to change the order, and the bottom right corner of an entity to resize it.</li>
+<li>The coloured dot in the bar of an entity changes its colour. Colours, sizes and the order of attributes are yours to use: they are not checked.</li>
+<li><strong>Export</strong> saves your drawing as a file, <strong>Import</strong> opens it again, <strong>PNG</strong> saves it as a picture.</li>
+<li>The canvas has no edges: drag the background (or use the arrow keys) to move around, zoom with <strong>−</strong> and <strong>+</strong>,
+and use <strong>Full screen</strong> for a big design. <strong>Ctrl+Z</strong> undoes your last step.</li>
 </ul>
 <p><strong>Check</strong> compares your entities, attributes, data types, keys and relationships with a model design.</p>
 HTML,
@@ -231,7 +237,7 @@ HTML,
             'title'    => 'One-to-many',
             'task'     => '<p>A football league has teams. A team has a name and a city. A player has a first name, a last name and a shirt number, and plays for exactly one team.</p>
 <p>Draw <code>Teams</code> (<code>TeamID</code>, <code>Name</code>, <code>City</code>) and <code>Players</code> (<code>PlayerID</code>, <code>FirstName</code>, <code>LastName</code>, <code>ShirtNumber</code>) and the relationship between them. The foreign key is called <code>TeamID</code>.</p>',
-            'hint'     => 'One team has many players: drag a connector of <code>Teams</code> onto <code>Players</code>. The foreign key <code>TeamID</code> appears in <code>Players</code>, the many side.',
+            'hint'     => 'One team has many players, so the foreign key goes in <code>Players</code>, the many side: add an attribute <code>TeamID</code> there, click <strong>FK</strong>, and drag its <strong>+</strong> onto <code>TeamID</code> of <code>Teams</code>.',
             'solution' => "Teams: TeamID int PK, Name varchar, City varchar\nPlayers: PlayerID int PK, FirstName varchar, LastName varchar, ShirtNumber int, TeamID int > Teams",
         ],
         [
@@ -239,7 +245,7 @@ HTML,
             'title'    => 'Which side is many?',
             'task'     => '<p>A company has departments (a name and the floor number they are on). Every employee (first name, last name, the day they were hired) works in one department; a department has many employees.</p>
 <p>Draw <code>Departments</code> (<code>DepartmentID</code>, <code>Name</code>, <code>Floor</code>) and <code>Employees</code> (<code>EmployeeID</code>, <code>FirstName</code>, <code>LastName</code>, <code>HireDate</code>) and link them. The foreign key is called <code>DepartmentID</code>.</p>',
-            'hint'     => 'Ask the question in both directions. Start the line at the "one" entity. Wrong way round? Click the ends of the line until the crow\'s foot is at the many side.',
+            'hint'     => 'Ask the question in both directions. The entity on the "many" side gets the foreign key attribute; the crow\'s foot of the line ends there.',
             'solution' => "Departments: DepartmentID int PK, Name varchar, Floor int\nEmployees: EmployeeID int PK, FirstName varchar, LastName varchar, HireDate date, DepartmentID int > Departments",
         ],
         [
@@ -255,7 +261,7 @@ HTML,
             'title'    => 'Many-to-many',
             'task'     => '<p>Students follow courses. A student (first name, last name) follows several courses, and a course (name, number of credits) has many students. For every student in a course we keep the grade, a whole number.</p>
 <p>Draw <code>Students</code> (<code>StudentID</code>, <code>FirstName</code>, <code>LastName</code>), <code>Courses</code> (<code>CourseID</code>, <code>Name</code>, <code>Credits</code>) and the link table <code>Enrolments</code> with the <code>Grade</code>. A student is enrolled in a course only once, so the link table needs no number of its own: use a composite key.</p>',
-            'hint'     => 'Drag a connector from <code>Students</code> to <code>Enrolments</code> and one from <code>Courses</code> to <code>Enrolments</code>. Then click <strong>PK</strong> on both foreign keys: together they are the key.',
+            'hint'     => '<code>Enrolments</code> gets <code>StudentID</code> and <code>CourseID</code>. Click <strong>PK</strong> and <strong>FK</strong> on both, and drag the <strong>+</strong> of each onto the key it points to: together they are the key of the link table.',
             'solution' => "Students: StudentID int PK, FirstName varchar, LastName varchar\nEnrolments: StudentID int PK > Students, CourseID int PK > Courses, Grade int\nCourses: CourseID int PK, Name varchar, Credits int",
         ],
         [
@@ -263,7 +269,7 @@ HTML,
             'title'    => 'An entity linked to itself',
             'task'     => '<p>A company keeps its employees: first name, last name and job title. Every employee has at most one manager, who is also an employee.</p>
 <p>Draw the single entity <code>Employees</code> (<code>EmployeeID</code>, <code>FirstName</code>, <code>LastName</code>, <code>Title</code>) with a relationship to itself. Call the foreign key <code>ManagerID</code>.</p>',
-            'hint'     => 'Click a connector of <code>Employees</code>, then click <code>Employees</code> itself. Rename the new attribute to <code>ManagerID</code>.',
+            'hint'     => 'Add <code>ManagerID</code> to <code>Employees</code>, click <strong>FK</strong>, and drag its <strong>+</strong> onto <code>EmployeeID</code> of the same entity.',
             'solution' => "Employees: EmployeeID int PK, FirstName varchar, LastName varchar, Title varchar, ManagerID int > Employees",
         ],
         [
@@ -271,7 +277,7 @@ HTML,
             'title'    => 'One-to-one',
             'task'     => '<p>Some employees (first name, last name) get a company car. A car has a license plate and a brand. A car belongs to exactly one employee, and an employee has at most one car.</p>
 <p>Draw <code>Employees</code> (<code>EmployeeID</code>, <code>FirstName</code>, <code>LastName</code>) and <code>Cars</code> (<code>CarID</code>, <code>LicensePlate</code>, <code>Brand</code>). Put the foreign key <code>EmployeeID</code> in <code>Cars</code> and make the relationship one-to-one.</p>',
-            'hint'     => 'Drag from <code>Employees</code> to <code>Cars</code>, then click the crow\'s foot at <code>Cars</code>: it becomes a bar. One at both ends.',
+            'hint'     => 'Add <code>EmployeeID</code> to <code>Cars</code> as a foreign key and link it to <code>EmployeeID</code> of <code>Employees</code>. Then click the crow\'s foot at <code>Cars</code>: it becomes a bar. One at both ends.',
             'solution' => "Employees: EmployeeID int PK, FirstName varchar, LastName varchar\nCars: CarID int PK, LicensePlate varchar, Brand varchar, EmployeeID int > Employees UNIQUE",
         ],
         [
@@ -296,7 +302,7 @@ HTML,
             'title'    => 'Two relationships, same entities',
             'task'     => '<p>An airline keeps airports (a three-letter code, a name, a city) and flights. A flight has a flight number such as <code>SN2093</code>, a departure moment (day and time), the airport it departs from and the airport it arrives at.</p>
 <p>Draw <code>Airports</code> (<code>AirportID</code>, <code>Code</code>, <code>Name</code>, <code>City</code>) and <code>Flights</code> (<code>FlightID</code>, <code>FlightNumber</code>, <code>DepartureTime</code>) with two relationships. Call the foreign keys <code>DepartureAirportID</code> and <code>ArrivalAirportID</code>.</p>',
-            'hint'     => 'Drag from <code>Airports</code> to <code>Flights</code> twice and rename the two new attributes. A flight number contains letters, so it is text.',
+            'hint'     => '<code>Flights</code> gets two foreign key attributes; drag the <strong>+</strong> of each onto <code>AirportID</code> of <code>Airports</code>. A flight number contains letters, so it is text.',
             'solution' => "Airports: AirportID int PK, Code varchar, Name varchar, City varchar\nFlights: FlightID int PK, FlightNumber varchar, DepartureTime datetime, DepartureAirportID int > Airports, ArrivalAirportID int > Airports",
         ],
         [

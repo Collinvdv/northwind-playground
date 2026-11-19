@@ -17,15 +17,15 @@ The same service can be on a booking several times, and a booking can have sever
 <p>A project is one case that you design in <strong>four steps</strong>. Every step adds a part of the story to the diagram.
 A step starts from the model design of the step before it, so a mistake in step 1 does not follow you to step 4.
 Read the whole case first: a good designer knows where the story is going.</p>
-<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys, and draw the relationships
-from the "one" side to the "many" side.</p>
+<p>The names to use are given in every step. Give every attribute a data type, mark the primary keys (PK) and the foreign keys (FK),
+and draw every relationship from the foreign key to the key it points to.</p>
 HTML,
     'exercises' => [
         [
             'type'     => 'erd',
             'title'    => 'Step 1: Rooms and room types',
             'task'     => '<p>Start with the rooms. A room type has a name, a price per night and a maximum number of guests. A room has a room number such as <code>12B</code>, a floor number, and is of one type.</p><p>Draw <code>RoomTypes</code> (<code>RoomTypeID</code>, <code>Name</code>, <code>PricePerNight</code>, <code>MaxGuests</code>) and <code>Rooms</code> (<code>RoomID</code>, <code>RoomNumber</code>, <code>Floor</code>) and their relationship. The foreign key is called <code>RoomTypeID</code>.</p>',
-            'hint'     => 'One type has many rooms: drag from <code>RoomTypes</code> to <code>Rooms</code>. A room number with a letter in it is text; a price is <code>DECIMAL</code>.',
+            'hint'     => 'One type has many rooms, so <code>Rooms</code> gets the foreign key <code>RoomTypeID</code>: drag its + onto <code>RoomTypeID</code> of <code>RoomTypes</code>. A room number with a letter in it is text; a price is <code>DECIMAL</code>.',
             'solution' => 'RoomTypes: RoomTypeID int PK, Name varchar, PricePerNight decimal, MaxGuests int
 Rooms: RoomID int PK, RoomNumber varchar, Floor int, RoomTypeID int > RoomTypes',
         ],
@@ -45,7 +45,7 @@ Guests: GuestID int PK, FirstName varchar, LastName varchar, Email varchar, Phon
             'type'     => 'erd',
             'title'    => 'Step 3: Extra services',
             'task'     => '<p>A guest can order services during a stay. A service has a name and a price. A booking can have several services and a service is ordered on many bookings; for every service on a booking we keep how many times it was ordered.</p><p>Add <code>Services</code> (<code>ServiceID</code>, <code>Name</code>, <code>Price</code>) and the link table <code>BookingServices</code> with a composite key and a <code>Quantity</code>.</p>',
-            'hint'     => 'Many-to-many: drag from <code>Bookings</code> to <code>BookingServices</code> and from <code>Services</code> to <code>BookingServices</code>, then click PK on both foreign keys.',
+            'hint'     => 'Many-to-many: <code>BookingServices</code> gets <code>BookingID</code> and <code>ServiceID</code>, both PK and FK. Drag the + of each onto the key it points to.',
             'starter'  => 'RoomTypes: RoomTypeID int PK, Name varchar, PricePerNight decimal, MaxGuests int
 + Rooms: RoomID int PK, RoomNumber varchar, Floor int, RoomTypeID int > RoomTypes
 Bookings: BookingID int PK, CheckIn date, CheckOut date, GuestID int > Guests, RoomID int > Rooms
