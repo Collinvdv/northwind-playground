@@ -26,9 +26,17 @@
  *     canvas the whole window (Esc leaves).
  *   - Undo / Redo: the buttons, Ctrl+Z and Ctrl+Y (or Shift+Ctrl+Z).
  *   - Selecting: Ctrl+A selects every entity, a click on an entity's bar that
- *     one, Shift+click adds or removes one. Dragging a selected entity moves
+ *     one, Shift+click adds or removes one, Shift+drag on the background
+ *     draws a frame around the ones to select. Dragging a selected entity moves
  *     all selected ones; Delete removes them; Esc or a click on the
  *     background clears the selection.
+ *   - Copying: Ctrl+C copies the selected entities, Ctrl+V pastes them (also in
+ *     another drawing, except on the exam page), Ctrl+D duplicates them. The
+ *     relationships between the copied entities come along. Also in the
+ *     right-click menu.
+ *   - Bend points: drag a line to bend it around an entity; drag a point to
+ *     move it, double-click it to remove it. While dragging a new line from a
+ *     +, every press of Shift (or Ctrl) drops a bend point under the pointer.
  *   - "Legend" explains the marks; "Overview" is a small map of the whole
  *     drawing in the bottom left corner (click or drag in it to go there).
  *
@@ -40,7 +48,8 @@
  *
  * "@x,y,w,h" is where the entity stands and how big it is (h = 0: as high as
  * its rows), "#green" its colour, UNIQUE after a foreign key means one-to-one,
- * a lone FK marks a foreign key that is not linked yet. Every change rewrites
+ * a lone FK marks a foreign key that is not linked yet. "~(x,y;x,y)" after a
+ * relationship holds the bend points of its line. Every change rewrites
  * the textarea, so Check, the exam's autosave (exam.js) and a page reload all
  * work on that text. "Text" in the toolbar shows it; it can be edited there
  * too. Without JavaScript the textarea alone is the editor.
@@ -78,11 +87,14 @@
   var COLOR_NAMES = Object.keys(COLORS);
 
   // {id, name, x, y, w, h, color, attrs: [attr]}
-  // attr: {name, type, pk, fk, ref (entity id or null), refAttr (the attr it points to, or null), unique}
+  // attr: {name, type, pk, fk, ref (entity id or null), refAttr (the attr it points to, or null), unique,
+  //        via: bend points [{x, y}] of its line, from this attribute to the one it points to}
   var entities = [];
-  var many = [];        // many-to-many lines: {a: entity id, b: entity id, was: the foreign key it came from, or null}
+  var many = [];        // many-to-many lines: {a: entity id, b: entity id, was: the foreign key it came from, or null, via: bend points from a to b}
   var nextId = 1;
-  var drag = null;      // what the pointer is doing: {kind: 'move' | 'size' | 'order' | 'link' | 'pan', ...}
+  var drag = null;      // what the pointer is doing: {kind: 'move' | 'size' | 'order' | 'link' | 'bend' | 'marquee' | 'pan', ...}
+  var clip = null;      // what Ctrl+C copied: {text: the entities in the notation, pastes: how often it was pasted}
+  var CLIP_KEY = 'nw.erd.clip';
   var view = { x: 0, y: 0, z: 1 };   // the canvas: moved by x, y pixels, zoomed by z
   var MIN_Z = 0.25;
   var MAX_Z = 2.5;
@@ -131,14 +143,29 @@
   function label(e) { return e.name || 'Unnamed'; }
   function target(a) { return a.ref !== null ? byId(a.ref) : null; }
 
-  function load(text) {
+  /** "120,40;200,80" → [{x: 120, y: 40}, {x: 200, y: 80}]. */
+  function points(text) {
+    return (text || '').split(';').map(function (pair) {
+      var xy = pair.split(',');
+      return { x: parseFloat(xy[0]), y: parseFloat(xy[1]) };
+    }).filter(function (p) { return isFinite(p.x) && isFinite(p.y); });
+  }
+  function viaText(via) {
+    return via.length ? ' ~(' + via.map(function (p) { return Math.round(p.x) + ',' + Math.round(p.y); }).join(';') + ')' : '';
+  }
+
+  /**
+   * Text → {list: entities, many: many-to-many lines}. extra: entities that are
+   * already on the canvas, which the text may point to as well (pasting).
+   */
+  function parse(text, extra) {
     var list = [];
     var refs = [];
     var manyRefs = [];
     text.split(/\r?\n/).forEach(function (line) {
       line = line.trim();
-      var mm = /^(\w+)\s*<>\s*(\w+)$/.exec(line);
-      if (mm) { manyRefs.push([mm[1], mm[2]]); return; }
+      var mm = /^(\w+)\s*<>\s*(\w+)\s*(?:~\s*\(([^)]*)\))?$/.exec(line);
+      if (mm) { manyRefs.push([mm[1], mm[2], points(mm[3])]); return; }
       var m = /^(\+?)\s*([\w ]+?)\s*(?:@\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*(\d+)\s*,\s*(\d+))?\s*)?(?:#(\w+)\s*)?:\s*(.*)$/.exec(line);
       if (!m) return;
       var color = (m[7] || '').toLowerCase();
@@ -149,7 +176,9 @@
         var c = /^(\S+)\s*(.*)$/.exec(column.trim());
         if (!c) return;
         var rest = c[2];
-        var a = { name: cleanName(c[1]), type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false };
+        var a = { name: cleanName(c[1]), type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false, via: [] };
+        var v = /~\s*\(([^)]*)\)/.exec(rest);
+        if (v) { a.via = points(v[1]); rest = rest.replace(v[0], ''); }
         var r = /-?>\s*(\w+)(?:\.(\w+))?/.exec(rest);
         if (r) {
           refs.push([a, r[1], r[2] || '']);
@@ -164,23 +193,24 @@
       list.push(e);
     });
     function find(name) {
-      for (var i = 0; i < list.length; i++) if (norm(list[i].name, true) === norm(name, true)) return list[i];
+      var all = extra ? list.concat(extra) : list;
+      for (var i = 0; i < all.length; i++) if (norm(all[i].name, true) === norm(name, true)) return all[i];
       return null;
     }
     refs.forEach(function (ref) {
       var a = ref[0];
       var t = find(ref[1]);
-      if (!t) { a.unique = false; return; }
+      if (!t) { a.unique = false; a.via = []; return; }
       a.ref = t.id;
       // The attribute it points to: the one that is named, else the first key attribute.
       a.refAttr = t.attrs.filter(function (x) { return ref[2] !== '' && norm(x.name) === norm(ref[2]); })[0]
         || t.attrs.filter(function (x) { return x.pk; })[0] || null;
     });
-    many = [];
+    var links = [];
     manyRefs.forEach(function (pair) {
       var a = find(pair[0]);
       var b = find(pair[1]);
-      if (a && b) many.push({ a: a.id, b: b.id, was: null });
+      if (a && b) links.push({ a: a.id, b: b.id, was: null, via: pair[2] });
     });
     // Entities without a place (a starter text, a design typed as text): left to right, "+" under the previous one.
     var column = 0;
@@ -198,16 +228,25 @@
       }
       previous = e;
     });
-    entities = list;
+    return { list: list, many: links };
+  }
+
+  function load(text) {
+    var d = parse(text);
+    entities = d.list;
+    many = d.many;
     selected = {};
   }
 
-  function serialize() {
-    var out = entities.map(function (e) {
+  /** The drawing as text; with a list: only those entities and the many-to-many lines between them (copying). */
+  function serialize(only) {
+    var ids = {};
+    (only || entities).forEach(function (e) { ids[e.id] = true; });
+    var out = (only || entities).map(function (e) {
       var columns = e.attrs.filter(function (a) { return a.name !== ''; }).map(function (a) {
         var t = target(a);
         var link = '';
-        if (t) link = ' > ' + label(t) + (a.refAttr && a.refAttr.name ? '.' + a.refAttr.name : '') + (a.unique ? ' UNIQUE' : '');
+        if (t) link = ' > ' + label(t) + (a.refAttr && a.refAttr.name ? '.' + a.refAttr.name : '') + (a.unique ? ' UNIQUE' : '') + viaText(a.via);
         else if (a.fk) link = ' FK';
         return a.name + (a.type ? ' ' + a.type : '') + (a.pk ? ' PK' : '') + link;
       });
@@ -217,7 +256,7 @@
     many.forEach(function (m) {
       var a = byId(m.a);
       var b = byId(m.b);
-      if (a && b) out.push(label(a) + ' <> ' + label(b));
+      if (a && b && ids[m.a] && ids[m.b]) out.push(label(a) + ' <> ' + label(b) + viaText(m.via));
     });
     return out.join('\n');
   }
@@ -430,7 +469,7 @@
   form.insertBefore(root, form.firstChild);
   form.classList.add('visual');
 
-  var IDLE = 'Drag “Entity” onto the canvas · drag the + of an attribute onto an attribute of another entity for a relationship · click a line end: one ↔ many · drag the background to move around';
+  var IDLE = 'Drag “Entity” onto the canvas · drag the + of an attribute onto an attribute of another entity for a relationship · click a line end: one ↔ many · drag a line to bend it · drag the background to move around, with Shift to select';
   function say(text) {
     status.textContent = text || IDLE;
     status.title = status.textContent;      // the whole message when it does not fit on the line
@@ -617,71 +656,131 @@
     svgEl('line', { x1: bx + d * 7, y1: y - 7, x2: bx + d * 7, y2: y + 7 }, g);
   }
 
+  function distance(p, q) { return Math.sqrt((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y)); }
+  function fix(n) { return Math.round(n * 10) / 10; }
+
   /**
-   * One relationship: the curve, the marks at both ends, a round click area on
-   * each end (one ↔ many) and a × in the middle. data goes on the click areas.
+   * The line of a relationship (one of relations()): {d: its path, mx, my: where
+   * the × goes, pts: its corners, or null for a line without bend points}.
+   * Without bend points it is one curve; with them, straight pieces from point
+   * to point with rounded corners.
    */
-  function relation(ax, ay, da, aMany, bx, by, db, bMany, data, title) {
+  function route(r) {
+    var x1 = r.ax + r.da * 16;
+    var x2 = r.bx + r.db * 16;
+    if (!r.via.length) {
+      var k = Math.max(50, Math.abs(x2 - x1) / 2);
+      var c1x = x1 + r.da * k;
+      var c2x = x2 + r.db * k;
+      return {
+        d: 'M' + x1 + ' ' + r.ay + ' C' + c1x + ' ' + r.ay + ' ' + c2x + ' ' + r.by + ' ' + x2 + ' ' + r.by,
+        mx: (x1 + 3 * c1x + 3 * c2x + x2) / 8, my: (r.ay + r.by) / 2,     // Bézier at t = 0.5
+        pts: null
+      };
+    }
+    var pts = [{ x: x1, y: r.ay }].concat(r.via, [{ x: x2, y: r.by }]);
+    var d = 'M' + x1 + ' ' + r.ay;
+    var longest = -1;
+    var mx = x1;
+    var my = r.ay;
+    for (var i = 1; i < pts.length; i++) {
+      var q = pts[i - 1];
+      var p = pts[i];
+      var n = pts[i + 1];
+      var len = distance(p, q);
+      if (len > longest) { longest = len; mx = (p.x + q.x) / 2; my = (p.y + q.y) / 2; }   // the ×: middle of the longest piece
+      var next = n ? distance(n, p) : 0;
+      var rad = Math.min(12, len / 2, next / 2);
+      if (!n || rad < 1) { d += ' L' + fix(p.x) + ' ' + fix(p.y); continue; }
+      d += ' L' + fix(p.x - (p.x - q.x) / len * rad) + ' ' + fix(p.y - (p.y - q.y) / len * rad)
+        + ' Q' + fix(p.x) + ' ' + fix(p.y) + ' ' + fix(p.x + (n.x - p.x) / next * rad) + ' ' + fix(p.y + (n.y - p.y) / next * rad);
+    }
+    return { d: d, mx: mx, my: my, pts: pts };
+  }
+
+  /** Which piece of the line pts[i] → pts[i + 1] is nearest to p: its i. */
+  function segmentAt(pts, p) {
+    var best = 0;
+    var bestD = Infinity;
+    for (var i = 0; i < pts.length - 1; i++) {
+      var a = pts[i];
+      var b = pts[i + 1];
+      var len2 = (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y);
+      var t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / len2)) : 0;
+      var d = distance(p, { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) });
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  /**
+   * One relationship: the line, the marks at both ends, a round click area on
+   * each end (one ↔ many), a × in the middle and a handle on every bend point.
+   * Its data goes on the group and on the click areas.
+   */
+  function relation(r) {
+    var data = r.data;
     var g = svgEl('g', { 'class': 'rel' });
-    var x1 = ax + da * 16;
-    var x2 = bx + db * 16;
-    var k = Math.max(50, Math.abs(x2 - x1) / 2);
-    var c1x = x1 + da * k;
-    var c2x = x2 + db * k;
-    var d = 'M' + x1 + ' ' + ay + ' C' + c1x + ' ' + ay + ' ' + c2x + ' ' + by + ' ' + x2 + ' ' + by;
-    svgEl('path', { d: d, 'class': 'hit' }, g);
-    svgEl('path', { d: d }, g);
-    if (aMany) crowFoot(g, x1, ay, ax); else oneBar(g, x1, ay, ax, da);
-    if (bMany) crowFoot(g, x2, by, bx); else oneBar(g, x2, by, bx, db);
+    Object.keys(data).forEach(function (key) { g.dataset[key] = data[key]; });
+    var x1 = r.ax + r.da * 16;
+    var x2 = r.bx + r.db * 16;
+    var line = route(r);
+    var hit = svgEl('path', { d: line.d, 'class': 'hit' }, g);
+    svgEl('title', {}, hit).textContent = 'Drag to bend this line around an entity';
+    svgEl('path', { d: line.d }, g);
+    if (r.aMany) crowFoot(g, x1, r.ay, r.ax); else oneBar(g, x1, r.ay, r.ax, r.da);
+    if (r.bMany) crowFoot(g, x2, r.by, r.bx); else oneBar(g, x2, r.by, r.bx, r.db);
 
     function endArea(x, y, end, isMany) {
       var c = svgEl('circle', { cx: x, cy: y, r: 12, 'class': 'end-hit' }, g);
       Object.keys(data).forEach(function (key) { c.dataset[key] = data[key]; });
       c.dataset.end = end;
-      svgEl('title', {}, c).textContent = (isMany ? 'Many' : 'One') + ' ' + title[end] + '. Click to make it ' + (isMany ? 'one' : 'many') + '.';
+      svgEl('title', {}, c).textContent = (isMany ? 'Many' : 'One') + ' ' + r.title[end] + '. Click to make it ' + (isMany ? 'one' : 'many') + '.';
     }
-    endArea(ax + da * 9, ay, 'a', aMany);
-    endArea(bx + db * 9, by, 'b', bMany);
+    endArea(r.ax + r.da * 9, r.ay, 'a', r.aMany);
+    endArea(r.bx + r.db * 9, r.by, 'b', r.bMany);
 
-    // Middle of the curve (Bézier at t = 0.5).
-    var mx = (x1 + 3 * c1x + 3 * c2x + x2) / 8;
-    var my = (ay + by) / 2;
-    var del = svgEl('g', { 'class': 'rel-del', transform: 'translate(' + mx + ' ' + my + ')' }, g);
+    var del = svgEl('g', { 'class': 'rel-del', transform: 'translate(' + line.mx + ' ' + line.my + ')' }, g);
     Object.keys(data).forEach(function (key) { del.dataset[key] = data[key]; });
     svgEl('circle', { r: 9 }, del);
     svgEl('path', { d: 'M-3.5 -3.5 L3.5 3.5 M3.5 -3.5 L-3.5 3.5' }, del);
     svgEl('title', {}, del).textContent = 'Remove this relationship';
+
+    r.via.forEach(function (p, i) {
+      var c = svgEl('circle', { cx: p.x, cy: p.y, r: 5, 'class': 'via' }, g);
+      c.dataset.point = i;
+      svgEl('title', {}, c).textContent = 'Bend point: drag to move it, double-click to remove it';
+    });
   }
 
-  /** Every relationship as the numbers relation() needs: both ends, their sides and marks. */
+  /** Every relationship as the numbers relation() and route() need: both ends, their sides and marks, its bend points. */
   function relations() {
     var list = [];
+    function add(a, ai, b, bi, via, aMany, bMany, data) {
+      if (dataMode) via = [];           // the boxes are other boxes there
+      // With bend points a line leaves a box on the side of its first (last) point.
+      var s = via.length
+        ? [via[0].x > a.x + boxW(a) / 2 ? 1 : -1, via[via.length - 1].x > b.x + boxW(b) / 2 ? 1 : -1]
+        : sides(a, b);
+      list.push({
+        ax: a.x + (s[0] > 0 ? boxW(a) : 0), ay: rowY(a, ai), da: s[0], aMany: aMany,
+        bx: b.x + (s[1] > 0 ? boxW(b) : 0), by: rowY(b, bi), db: s[1], bMany: bMany,
+        via: via, data: data,
+        title: { a: label(a) + ' per ' + label(b), b: label(b) + ' per ' + label(a) }
+      });
+    }
     // Foreign keys: from the foreign key row (end "a", the child) to the row it points to (end "b", the parent).
     entities.forEach(function (e) {
       e.attrs.forEach(function (a, i) {
         var t = target(a);
-        if (!t) return;
-        var s = sides(e, t);
-        list.push({
-          ax: e.x + (s[0] > 0 ? boxW(e) : 0), ay: rowY(e, i), da: s[0], aMany: !a.unique,
-          bx: t.x + (s[1] > 0 ? boxW(t) : 0), by: rowY(t, t.attrs.indexOf(a.refAttr)), db: s[1], bMany: false,
-          data: { kind: 'fk', entity: e.id, index: i },
-          title: { a: label(e) + ' per ' + label(t), b: label(t) + ' per ' + label(e) }
-        });
+        if (t) add(e, i, t, t.attrs.indexOf(a.refAttr), a.via, !a.unique, false, { kind: 'fk', entity: e.id, index: i });
       });
     });
     // Many-to-many lines: name bar to name bar.
     many.forEach(function (m, i) {
       var a = byId(m.a);
       var b = byId(m.b);
-      if (!a || !b) return;
-      var s = sides(a, b);
-      list.push({
-        ax: a.x + (s[0] > 0 ? boxW(a) : 0), ay: rowY(a, -1), da: s[0], aMany: true,
-        bx: b.x + (s[1] > 0 ? boxW(b) : 0), by: rowY(b, -1), db: s[1], bMany: true,
-        data: { kind: 'mm', index: i },
-        title: { a: label(a) + ' per ' + label(b), b: label(b) + ' per ' + label(a) }
-      });
+      if (a && b) add(a, -1, b, -1, m.via, true, true, { kind: 'mm', index: i });
     });
     return list;
   }
@@ -689,10 +788,141 @@
   /** Draw the relationship lines. */
   function draw() {
     while (lines.firstChild) lines.removeChild(lines.firstChild);
-    relations().forEach(function (r) {
-      relation(r.ax, r.ay, r.da, r.aMany, r.bx, r.by, r.db, r.bMany, r.data, r.title);
-    });
+    relations().forEach(relation);
     drawMap();
+  }
+
+  // ---- bend points ------------------------------------------------------------
+
+  /** The bend points of the relationship that data (of a .rel) names, or null. */
+  function viaOf(data) {
+    if (data.kind === 'mm') {
+      var m = many[+data.index];
+      return m ? m.via : null;
+    }
+    var e = byId(+data.entity);
+    var a = e ? e.attrs[+data.index] : null;
+    return a && target(a) ? a.via : null;
+  }
+
+  function relData(node) {
+    return { kind: node.dataset.kind, entity: node.dataset.entity, index: node.dataset.index };
+  }
+
+  /** A new bend point at p, in the piece of the line that is nearest. Returns its place in the list, or -1. */
+  function addBend(data, p) {
+    var via = viaOf(data);
+    if (!via) return -1;
+    var r = relations().filter(function (o) {
+      return o.data.kind === data.kind && String(o.data.index) === String(data.index) && (data.kind === 'mm' || String(o.data.entity) === String(data.entity));
+    })[0];
+    var pts = r ? route(r).pts : null;
+    var i = pts ? segmentAt(pts, p) : 0;
+    via.splice(i, 0, { x: Math.round(p.x), y: Math.round(p.y) });
+    return i;
+  }
+
+  /** The bend points of the relationships that run between entities of list (they move along with them). */
+  function innerVias(list, links) {
+    var ids = {};
+    list.forEach(function (e) { ids[e.id] = true; });
+    var out = [];
+    list.forEach(function (e) {
+      e.attrs.forEach(function (a) { if (a.ref !== null && ids[a.ref]) out = out.concat(a.via); });
+    });
+    links.forEach(function (m) { if (ids[m.a] && ids[m.b]) out = out.concat(m.via); });
+    return out;
+  }
+
+  // ---- copy and paste -----------------------------------------------------------
+
+  /** What was copied last: here, or (not on the exam page) in another drawing in this browser. */
+  function clipboard() {
+    if (!isExam) {
+      try {
+        var text = localStorage.getItem(CLIP_KEY);
+        if (text && (!clip || clip.text !== text)) clip = { text: text, pastes: 0 };
+      } catch (err) { /* no storage: only what was copied on this page */ }
+    }
+    return clip;
+  }
+
+  function copyEntities(list) {
+    if (!list.length) return;
+    clip = { text: serialize(list), pastes: 0 };
+    if (!isExam) {
+      try { localStorage.setItem(CLIP_KEY, clip.text); } catch (err) { /* stays on this page */ }
+    }
+    say('Copied ' + list.length + ' entit' + (list.length === 1 ? 'y' : 'ies') + '. Ctrl+V pastes ' + (list.length === 1 ? 'it' : 'them') + '.');
+  }
+
+  /**
+   * Add the entities of text to the drawing, under new names where a name is
+   * taken. at: where their top left corner goes; without it they land step × 30
+   * pixels from where they were copied (or in the middle of the screen, when
+   * that is out of sight). The new entities are selected.
+   */
+  function pasteText(text, at, step) {
+    var d = parse(text, entities);
+    if (!d.list.length) return null;
+    if (dataMode) setDataMode(false);
+    var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    d.list.forEach(function (e) {
+      x1 = Math.min(x1, e.x); y1 = Math.min(y1, e.y);
+      x2 = Math.max(x2, e.x + e.w); y2 = Math.max(y2, e.y + height(e));
+    });
+    var dx = 30 * step;
+    var dy = 30 * step;
+    if (at) {
+      dx = at.x - x1;
+      dy = at.y - y1;
+    } else {
+      var vx = -view.x / view.z, vy = -view.y / view.z, vw = canvas.clientWidth / view.z, vh = canvas.clientHeight / view.z;
+      if (x1 + dx > vx + vw - 60 || x2 + dx < vx + 60 || y1 + dy > vy + vh - 60 || y2 + dy < vy + 60) {
+        dx = vx + vw / 2 - (x1 + x2) / 2;
+        dy = vy + vh / 2 - (y1 + y2) / 2;
+      }
+    }
+    dx = Math.round(dx);
+    dy = Math.round(dy);
+    var taken = {};
+    var ids = {};
+    entities.forEach(function (e) { taken[norm(label(e), true)] = true; });
+    d.list.forEach(function (e) {
+      ids[e.id] = true;
+      e.x += dx;
+      e.y += dy;
+      var name = e.name;
+      for (var n = 1; taken[norm(name, true)]; n++) name = e.name + 'Copy' + (n > 1 ? n : '');
+      e.name = name;
+      taken[norm(name, true)] = true;
+    });
+    // Bend points come along between the new entities; a line to an entity that was already here starts straight.
+    d.list.forEach(function (e) {
+      e.attrs.forEach(function (a) { if (a.ref !== null && !ids[a.ref]) a.via = []; });
+    });
+    innerVias(d.list, d.many).forEach(function (p) { p.x += dx; p.y += dy; });
+    entities = entities.concat(d.list);
+    many = many.concat(d.many);
+    render();
+    select(d.list);
+    sync();
+    canvas.focus({ preventScroll: true });
+    return d.list;
+  }
+
+  function paste(at) {
+    var c = clipboard();
+    if (!c) { say('Nothing to paste yet: select entities and press Ctrl+C first.'); return; }
+    if (!at) c.pastes++;
+    var list = pasteText(c.text, at, c.pastes);
+    if (list) say('Pasted ' + list.length + ' entit' + (list.length === 1 ? 'y' : 'ies') + ': drag one of them to move them.');
+  }
+
+  function duplicate(list) {
+    if (!list.length) return;
+    var made = pasteText(serialize(list), null, 1);
+    if (made) say('Duplicated ' + made.length + ' entit' + (made.length === 1 ? 'y' : 'ies') + ': drag one of them to move them.');
   }
 
   // ---- selection --------------------------------------------------------------
@@ -797,6 +1027,12 @@
       b.x2 = Math.max(b.x2, e.x + boxW(e));
       b.y2 = Math.max(b.y2, e.y + boxH(e));
     });
+    if (!dataMode) {
+      innerVias(entities, many).forEach(function (p) {
+        b.x1 = Math.min(b.x1, p.x); b.y1 = Math.min(b.y1, p.y);
+        b.x2 = Math.max(b.x2, p.x); b.y2 = Math.max(b.y2, p.y);
+      });
+    }
     b.x1 -= 30; b.y1 -= 20; b.x2 += 90; b.y2 += 20;
     return b;
   }
@@ -844,8 +1080,7 @@
     relations().forEach(function (r) {
       var x1 = r.ax + r.da * 16;
       var x2 = r.bx + r.db * 16;
-      var k = Math.max(50, Math.abs(x2 - x1) / 2);
-      out += '<path d="M' + x1 + ' ' + r.ay + ' C' + (x1 + r.da * k) + ' ' + r.ay + ' ' + (x2 + r.db * k) + ' ' + r.by + ' ' + x2 + ' ' + r.by + '"/>'
+      out += '<path d="' + route(r).d + '"/>'
         + mark(r.aMany, x1, r.ay, r.ax, r.da) + mark(r.bMany, x2, r.by, r.bx, r.db);
     });
     out += '</g>';
@@ -935,7 +1170,7 @@
   }
 
   function addAttribute(e) {
-    e.attrs.push({ name: '', type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false });
+    e.attrs.push({ name: '', type: '', pk: false, fk: false, ref: null, refAttr: null, unique: false, via: [] });
     render();
     sync();
     var inputs = entityNode(e).querySelectorAll('.attr');
@@ -946,6 +1181,7 @@
     a.ref = null;
     a.refAttr = null;
     a.unique = false;
+    a.via = [];
   }
 
   /** Nothing may keep pointing to an attribute or entity that is gone. */
@@ -959,9 +1195,10 @@
   /**
    * A relationship between two rows. Which one holds the foreign key: the one
    * marked FK; otherwise the one that is not a primary key; otherwise the row
-   * the line was started from (e1, a1).
+   * the line was started from (e1, a1). via: the bend points that were dropped
+   * on the way from a1 to a2.
    */
-  function linkRows(e1, a1, e2, a2) {
+  function linkRows(e1, a1, e2, a2, via) {
     if (a1 === a2) return;
     var firstIsKey;
     if (a1.fk !== a2.fk) firstIsKey = a1.fk;
@@ -975,6 +1212,7 @@
     fk.ref = parent.id;
     fk.refAttr = key;
     fk.unique = false;
+    fk.via = !via ? [] : firstIsKey ? via : via.slice().reverse();
     if (!fk.type && key.type) fk.type = key.type;      // a foreign key has the type of the key it points to
     render();
     sync();
@@ -993,6 +1231,7 @@
         m.was.attr.fk = true;
         m.was.attr.ref = m.was.parent;
         m.was.attr.refAttr = byId(m.was.parent).attrs.indexOf(m.was.key) >= 0 ? m.was.key : null;
+        m.was.attr.via = (m.a === m.was.parent ? m.via.slice().reverse() : m.via.slice());
         many.splice(+data.index, 1);
         say('One-to-many again: ' + (m.was.attr.name || 'the attribute') + ' is the foreign key.');
       } else {
@@ -1014,7 +1253,7 @@
         return;
       } else if (child !== parent) {
         // Many at both ends: no foreign key can hold that. The attribute stays, without its link.
-        many.push({ a: parent.id, b: child.id, was: { parent: parent.id, child: child.id, attr: attr, key: attr.refAttr } });
+        many.push({ a: parent.id, b: child.id, was: { parent: parent.id, child: child.id, attr: attr, key: attr.refAttr }, via: attr.via.slice().reverse() });
         unlink(attr);
         say('Many-to-many: no foreign key can store this. Tables need a link table in between.');
       } else {
@@ -1261,15 +1500,26 @@
 
   surface.addEventListener('pointerdown', function (ev) {
     if (ev.button !== undefined && ev.button !== 0) return;
+    var cls = ev.target.classList;
+    var relNode = !dataMode && !picking && ev.target.closest('.rel');
+    if (relNode && (cls.contains('via') || cls.contains('hit'))) {
+      // A line or one of its bend points: drag to bend it. point -1: a new point, made when the pointer really moves.
+      var data = relData(relNode);
+      var via = viaOf(data);
+      if (!via) return;
+      ev.preventDefault();
+      canvas.focus({ preventScroll: true });
+      drag = { kind: 'bend', data: data, via: via, point: cls.contains('via') ? +ev.target.dataset.point : -1, startX: ev.clientX, startY: ev.clientY, moved: false };
+      return;
+    }
     var hit = fromEvent(ev);
     if (!hit || !hit.entity || picking) return;
     var e = hit.entity;
-    var cls = ev.target.classList;
     var p = surfacePoint(ev);
     if (cls.contains('link') && hit.attr) {
       // Relationship: from this row to another row.
       ev.preventDefault();
-      drag = { kind: 'link', entity: e, attr: hit.attr, index: +hit.row.dataset.index, moved: false, startX: ev.clientX, startY: ev.clientY, temp: null };
+      drag = { kind: 'link', entity: e, attr: hit.attr, index: +hit.row.dataset.index, moved: false, startX: ev.clientX, startY: ev.clientY, temp: null, via: [], p: p };
     } else if (cls.contains('grip') && hit.attr) {
       // Order of the attributes.
       ev.preventDefault();
@@ -1291,7 +1541,9 @@
       if (!selected[e.id]) select([e]);           // dragging one that is not selected: only that one
       drag = {
         kind: 'move', entity: e, x: p.x, y: p.y,
-        group: selection().map(function (o) { return { e: o, x: o.x, y: o.y, box: entityNode(o) }; })
+        group: selection().map(function (o) { return { e: o, x: o.x, y: o.y, box: entityNode(o) }; }),
+        // The bend points of the lines between them move along.
+        points: innerVias(selection(), many).map(function (pt) { return { p: pt, x: pt.x, y: pt.y }; })
       };
       drag.group.forEach(function (g) { g.box.classList.add('moving'); });
     }
@@ -1345,22 +1597,41 @@
     stopPicking();
     var p = surfacePoint(ev);
     var hit = fromEvent(ev);
+    var relNode = !dataMode && ev.target.closest('.rel');
+    var via = relNode ? viaOf(relData(relNode)) : null;
     if (dataMode) {
       var de = hit && hit.entity;
       openMenu(ev, (de ? [['Add row', function () { addDataRow(de); }]] : []).concat([
         ['Back to the diagram', function () { setDataMode(false); }],
         ['Show everything (Fit)', fit]
       ]));
+    } else if (via) {
+      // A line, or one of its bend points.
+      var data = relData(relNode);
+      var point = ev.target.classList.contains('via') ? +ev.target.dataset.point : -1;
+      openMenu(ev, [
+        point >= 0
+          ? ['Remove this bend point', function () { via.splice(point, 1); draw(); sync(); }]
+          : ['Add bend point here', function () { addBend(data, p); draw(); sync(); }],
+        ['Straighten the line', function () { via.length = 0; draw(); sync(); }, via.length > 0],
+        ['Remove relationship', function () { removeRelation(data); }]
+      ]);
     } else if (hit && hit.entity) {
       var e = hit.entity;
+      // On one of the selected entities: copy them all. On another one: only that one.
+      var which = function () { return selected[e.id] ? selection() : [e]; };
+      var count = selected[e.id] ? selection().length : 1;
       openMenu(ev, [
         ['Add attribute', function () { addAttribute(e); }],
         ['Next colour', function () { e.color = COLOR_NAMES[(COLOR_NAMES.indexOf(e.color) + 1) % COLOR_NAMES.length]; render(); sync(); }],
+        [count > 1 ? 'Copy ' + count + ' entities (Ctrl+C)' : 'Copy (Ctrl+C)', function () { copyEntities(which()); }],
+        [count > 1 ? 'Duplicate ' + count + ' entities (Ctrl+D)' : 'Duplicate (Ctrl+D)', function () { duplicate(which()); }],
         ['Remove entity', function () { removeEntity(e); }]
       ]);
     } else {
       openMenu(ev, [
         ['New entity here', function () { addEntity(p.x, p.y); }],
+        ['Paste here (Ctrl+V)', function () { paste(p); }, !!clipboard()],
         ['Select all (Ctrl+A)', selectAll, entities.length > 0],
         ['Show everything (Fit)', fit],
         ['Undo', function () { travel(-1); }, at > 0],
@@ -1378,14 +1649,32 @@
     var p = surfacePoint(ev);
     addEntity(p.x - 20, p.y - HEAD_H / 2);
   });
+  // Double-click on a bend point: gone.
+  surface.addEventListener('dblclick', function (ev) {
+    if (!ev.target.classList.contains('via')) return;
+    var via = viaOf(relData(ev.target.closest('.rel')));
+    if (!via) return;
+    via.splice(+ev.target.dataset.point, 1);
+    draw();
+    sync();
+    say('Bend point removed.');
+  });
 
-  // The background: drag it to move around (the canvas has no edges).
+  // The background: drag it to move around (the canvas has no edges); with Shift, to draw a frame around entities to select.
   canvas.addEventListener('pointerdown', function (ev) {
     if (ev.button !== undefined && ev.button !== 0) return;
     if (ev.target !== canvas && ev.target !== surface && ev.target !== lines && ev.target !== empty) return;
     if (picking) return;
     ev.preventDefault();
     canvas.focus({ preventScroll: true });
+    if (ev.shiftKey) {
+      var p = surfacePoint(ev);
+      var keep = {};
+      Object.keys(selected).forEach(function (id) { keep[id] = true; });
+      drag = { kind: 'marquee', x: p.x, y: p.y, keep: keep, box: el('div', 'erd-marquee') };
+      surface.appendChild(drag.box);
+      return;
+    }
     drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false };
     canvas.classList.add('panning');
   });
@@ -1418,12 +1707,40 @@
     }
     var p = surfacePoint(ev);
     var e = drag.entity;
-    if (drag.kind === 'move') {
+    if (drag.kind === 'marquee') {
+      // The frame, and everything it touches (on top of what was selected before).
+      var mx1 = Math.min(drag.x, p.x), my1 = Math.min(drag.y, p.y), mx2 = Math.max(drag.x, p.x), my2 = Math.max(drag.y, p.y);
+      drag.box.style.left = mx1 + 'px';
+      drag.box.style.top = my1 + 'px';
+      drag.box.style.width = (mx2 - mx1) + 'px';
+      drag.box.style.height = (my2 - my1) + 'px';
+      selected = {};
+      Object.keys(drag.keep).forEach(function (id) { selected[id] = true; });
+      entities.forEach(function (o) {
+        if (o.x < mx2 && o.x + boxW(o) > mx1 && o.y < my2 && o.y + boxH(o) > my1) selected[o.id] = true;
+      });
+      markSelection();
+    } else if (drag.kind === 'bend') {
+      if (!drag.moved) {
+        if (Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) < 4) return;
+        drag.moved = true;
+        if (drag.point < 0) drag.point = addBend(drag.data, p);
+      }
+      var pt = drag.via[drag.point];
+      if (!pt) return;
+      pt.x = Math.round(p.x);
+      pt.y = Math.round(p.y);
+      draw();
+    } else if (drag.kind === 'move') {
       drag.group.forEach(function (g) {
         g.e.x = Math.round(g.x + p.x - drag.x);
         g.e.y = Math.round(g.y + p.y - drag.y);
         g.box.style.left = g.e.x + 'px';
         g.box.style.top = g.e.y + 'px';
+      });
+      drag.points.forEach(function (o) {
+        o.p.x = Math.round(o.x + p.x - drag.x);
+        o.p.y = Math.round(o.y + p.y - drag.y);
       });
       draw();
     } else if (drag.kind === 'size') {
@@ -1443,6 +1760,7 @@
     } else if (drag.kind === 'link') {
       if (!drag.moved && Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) < 6) return;
       drag.moved = true;
+      drag.p = p;
       if (drag.temp) drag.temp.remove();
       clearMarks('target-row');
       clearMarks('target');
@@ -1456,8 +1774,10 @@
         endX = p.x < t.x + t.w / 2 && t !== e ? t.x : t.x + t.w;
         endY = rowY(t, snap.index);
       }
-      var fromRight = endX > e.x + e.w / 2;
-      drag.temp = svgEl('path', { d: 'M' + (e.x + (fromRight ? e.w : 0)) + ' ' + rowY(e, drag.index) + ' L' + endX + ' ' + endY, 'class': 'temp' + (snap ? ' snapped' : '') });
+      // Through the bend points that were dropped on the way (Shift or Ctrl).
+      var fromRight = (drag.via.length ? drag.via[0].x : endX) > e.x + e.w / 2;
+      var through = drag.via.map(function (v) { return ' L' + v.x + ' ' + v.y; }).join('');
+      drag.temp = svgEl('path', { d: 'M' + (e.x + (fromRight ? e.w : 0)) + ' ' + rowY(e, drag.index) + through + ' L' + endX + ' ' + endY, 'class': 'temp' + (snap ? ' snapped' : '') });
       if (snap) {
         var node = entityNode(snap.entity);
         node.classList.add('target');
@@ -1465,7 +1785,7 @@
         say('Release to link ' + (drag.attr.name || 'this attribute') + ' with ' + label(snap.entity) + '.' + (snap.attr.name || 'attribute')
           + '. Move over another row to choose that one.');
       } else {
-        say('Drag towards the entity it belongs with: the line snaps to it.');
+        say('Drag towards the entity it belongs with: the line snaps to it. Press Shift on the way for a bend point.');
       }
     }
   });
@@ -1477,6 +1797,20 @@
     if (d.kind === 'pan') {
       canvas.classList.remove('panning');
       if (!d.moved && selection().length) { select([]); say(); }     // a click on the background: nothing selected
+      return;
+    }
+    if (d.kind === 'marquee') {
+      d.box.remove();
+      var n = selection().length;
+      say(n ? n + ' entit' + (n === 1 ? 'y' : 'ies') + ' selected: drag one of them to move them together, Ctrl+C copies, Delete removes. Esc clears the selection.' : '');
+      return;
+    }
+    if (d.kind === 'bend') {
+      if (!d.moved) return;
+      swallowNextClick();
+      draw();
+      sync();
+      say('Bend point: drag it to move it, double-click it to remove it.');
       return;
     }
     if (d.kind === 'move') {
@@ -1498,7 +1832,7 @@
       swallowNextClick();
       if (d.moved) {
         var snap = magnet(surfacePoint(ev), d.entity, d.attr);
-        if (snap) linkRows(d.entity, d.attr, snap.entity, snap.attr);
+        if (snap) linkRows(d.entity, d.attr, snap.entity, snap.attr, d.via);
         else { draw(); say('Not linked: release on or near an entity that has attributes.'); }
       } else {
         picking = { entity: d.entity, attr: d.attr };
@@ -1511,6 +1845,14 @@
   document.addEventListener('keydown', function (ev) {
     var inEditor = root.contains(ev.target) || ev.target === document.body;
     var typing = /^(INPUT|SELECT|TEXTAREA)$/.test(ev.target.tagName);
+    // While a new line is being dragged: Shift or Ctrl drops a bend point under the pointer.
+    if (drag && drag.kind === 'link' && (ev.key === 'Shift' || ev.key === 'Control')) {
+      if (drag.moved && !ev.repeat) {
+        drag.via.push({ x: Math.round(drag.p.x), y: Math.round(drag.p.y) });
+        say('Bend point ' + drag.via.length + ' added. Drag on to the attribute it belongs with.');
+      }
+      return;
+    }
     if (ev.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
     if (ev.key === 'Escape' && picking) { stopPicking(); return; }
     if (ev.key === 'Escape' && selection().length) { select([]); say(); return; }
@@ -1526,6 +1868,25 @@
       ev.preventDefault();
       removeSelected();
       return;
+    }
+
+    // Copy, paste, duplicate the selected entities (inside a text box, or with text selected: the text, as usual).
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && inEditor && !typing) {
+      var letter = ev.key.toLowerCase();
+      if (letter === 'c' && selection().length && !String(window.getSelection()).trim()) {
+        ev.preventDefault();
+        copyEntities(selection());
+        return;
+      }
+      if (letter === 'v') {
+        if (clipboard()) { ev.preventDefault(); paste(); }
+        return;
+      }
+      if (letter === 'd' && selection().length) {
+        ev.preventDefault();
+        duplicate(selection());
+        return;
+      }
     }
 
     // Undo / redo, also while a name is being typed (the drawing is one history, not one per box).
@@ -1585,6 +1946,9 @@
       e.y = tops[c] || PAD;
       tops[c] = e.y + boxH(e) + GAP_Y;
     });
+    // Every entity moved: the bend points are no longer where the lines run.
+    entities.forEach(function (e) { e.attrs.forEach(function (a) { a.via = []; }); });
+    many.forEach(function (m) { m.via = []; });
     view.x = 0;
     view.y = 0;
     applyView();

@@ -1236,7 +1236,8 @@ function parseErd(string $text, bool $lenient = false): array|string
         }
         $stack = $line[0] === '+';
         // "A <> B": a many-to-many relationship as it is drawn before the link table exists.
-        if (preg_match('/^(\w+)\s*<>\s*(\w+)$/', $line, $m)) {
+        // "~(x,y;x,y)" behind it: the bend points of the line in the editor, only a matter of drawing.
+        if (preg_match('/^(\w+)\s*<>\s*(\w+)\s*(?:~\s*\([^)]*\))?$/', $line, $m)) {
             $manyRefs[] = [$m[1], $m[2]];
             continue;
         }
@@ -1265,6 +1266,7 @@ function parseErd(string $text, bool $lenient = false): array|string
                 continue;
             }
             [, $name, $rest] = $c;
+            $rest = preg_replace('/~\s*\([^)]*\)/', '', $rest);   // bend points of the editor's line: "> Teams.TeamID ~(120,40;200,80)"
             if (preg_match('/-?>\s*(\w+)(?:\.(\w+))?/', $rest, $r)) {
                 $rest = str_replace($r[0], '', $rest);
                 // UNIQUE: at most one row here per row there, a one-to-one relationship.
@@ -1609,6 +1611,7 @@ function renderErdHelp(): string
         . '<li><strong>Relationship:</strong> drag the + behind a foreign key onto the key it points to in the other entity (or click the +, then that attribute). Near an entity the line snaps to it: to the row under the pointer, else the attribute with the same name, else the primary key.</li>'
         . '<li><strong>One or many:</strong> click an end of the line. Bar = one, crow\'s foot = many.</li>'
         . '<li><strong>Remove a relationship:</strong> the × in the middle of its line.</li>'
+        . '<li><strong>Bend a line:</strong> drag the line itself to lead it around an entity; that makes a bend point. Drag a point to move it, double-click it to remove it. While you drag a new line from a +, every press of Shift (or Ctrl) drops a bend point.</li>'
         . '<li><strong>Order:</strong> drag an attribute by the grip in front of it.</li>'
         . '<li><strong>Size:</strong> drag the bottom right corner of an entity.</li>'
         . '<li><strong>Move, colour:</strong> drag the coloured bar; click the dot in it.</li>'
@@ -1616,7 +1619,8 @@ function renderErdHelp(): string
         . '<li><strong>Export / Import:</strong> save the drawing as a file and open it again. PNG saves a picture.</li>'
         . '<li><strong>Move around:</strong> drag the background, or use the arrow keys. Zoom with − / +, the + and − keys or Ctrl + scroll. Fit shows everything.</li>'
         . '<li><strong>Undo:</strong> Ctrl+Z, redo Ctrl+Y.</li>'
-        . '<li><strong>Select:</strong> Ctrl+A selects every entity, a click on a bar one, Shift+click adds one. Drag a selected entity to move them all; Delete removes them; Esc clears.</li>'
+        . '<li><strong>Select:</strong> Ctrl+A selects every entity, a click on a bar one, Shift+click adds one, Shift+drag on the background draws a frame around the ones you want. Drag a selected entity to move them all; Delete removes them; Esc clears.</li>'
+        . '<li><strong>Copy:</strong> Ctrl+C copies the selected entities, Ctrl+V pastes them, Ctrl+D duplicates them. Or right-click an entity. The relationships between them come along.</li>'
         . '<li><strong>Legend, Overview:</strong> the two buttons show or hide the legend and the small map in the corners of the canvas. Click in the map to go there.</li>'
         . '</ul>'
         . '<h2>Data types</h2><div class="erd-types">'
